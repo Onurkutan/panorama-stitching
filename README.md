@@ -1,5 +1,7 @@
 # panorama-stitching
 
+[![CI](https://github.com/Onurkutan/panorama-stitching/actions/workflows/ci.yml/badge.svg)](https://github.com/Onurkutan/panorama-stitching/actions/workflows/ci.yml)
+
 Two-image panorama stitching from scratch with Python and OpenCV: SIFT features,
 FLANN matching with Lowe's ratio test, RANSAC homography, perspective warping,
 feather blending and automatic border cropping. Ships with a small zero-dependency
@@ -62,6 +64,14 @@ Each set is written to `outputs/<set>/` (panorama, keypoint images, raw and
 RANSAC-filtered matches). Without `--headless` (or `HEADLESS=1`) the last panorama is
 also shown in an OpenCV window. Failures such as too few matches are reported per set
 and the remaining sets still run.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check .
+pytest
+```
 
 ## Project layout
 

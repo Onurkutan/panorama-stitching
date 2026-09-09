@@ -1,0 +1,16 @@
+# Tool configuration only: the project is a set of flat modules, dependencies
+# live in requirements.txt (runtime) and requirements-dev.txt (tests/lint).
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["web_outputs", "web_uploads", "outputs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = ["slow: end-to-end runs on the bundled example images"]
