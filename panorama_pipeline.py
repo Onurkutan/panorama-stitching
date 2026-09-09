@@ -136,8 +136,7 @@ def stitch_pair(left_path, right_path, output_dir, max_side=None):
     good_matches = matcher.match_features(kp_left, des_left, kp_right, des_right)
     if len(good_matches) < MIN_MATCH_COUNT:
         raise PanoramaError(
-            f"Yeterli eslesme bulunamadi. Gerekli: {MIN_MATCH_COUNT}, "
-            f"bulunan: {len(good_matches)}"
+            f"Yeterli eslesme bulunamadi. Gerekli: {MIN_MATCH_COUNT}, bulunan: {len(good_matches)}"
         )
 
     match_preview = cv2.drawMatches(

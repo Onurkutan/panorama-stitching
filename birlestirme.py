@@ -16,15 +16,11 @@ def _homografiyi_dogrula(H):
 
     H = np.asarray(H, dtype=np.float64)
     if H.shape != (3, 3) or not np.all(np.isfinite(H)):
-        raise PanoramaError(
-            "Homografi dejenere; goruntuler yeterince ortusmuyor olabilir."
-        )
+        raise PanoramaError("Homografi dejenere; goruntuler yeterince ortusmuyor olabilir.")
 
     # A near-singular matrix collapses the image onto a line or blows it up.
     if abs(np.linalg.det(H)) < 1e-8:
-        raise PanoramaError(
-            "Homografi dejenere; goruntuler yeterince ortusmuyor olabilir."
-        )
+        raise PanoramaError("Homografi dejenere; goruntuler yeterince ortusmuyor olabilir.")
     return H
 
 
@@ -45,9 +41,7 @@ def _tuval_ve_cevirme(H, sol_yukseklik, sol_genislik, sag_yukseklik, sag_genisli
     # Points behind the camera plane come back as inf/nan; never feed those
     # into the int() conversions below.
     if not np.all(np.isfinite(tum_noktalar)):
-        raise PanoramaError(
-            "Homografi dejenere; goruntuler yeterince ortusmuyor olabilir."
-        )
+        raise PanoramaError("Homografi dejenere; goruntuler yeterince ortusmuyor olabilir.")
 
     xmin, ymin = tum_noktalar.min(axis=0)
     xmax, ymax = tum_noktalar.max(axis=0)
@@ -57,9 +51,7 @@ def _tuval_ve_cevirme(H, sol_yukseklik, sol_genislik, sag_yukseklik, sag_genisli
     girdi_pikselleri = sol_yukseklik * sol_genislik + sag_yukseklik * sag_genislik
     istenen_alan = float(xmax - xmin + 2 * pad) * float(ymax - ymin + 2 * pad)
     if istenen_alan > MAX_TUVAL_KATSAYISI * girdi_pikselleri:
-        raise PanoramaError(
-            "Homografi dejenere; goruntuler yeterince ortusmuyor olabilir."
-        )
+        raise PanoramaError("Homografi dejenere; goruntuler yeterince ortusmuyor olabilir.")
 
     tx = int(np.floor(-xmin)) + pad
     ty = int(np.floor(-ymin)) + pad
@@ -78,10 +70,7 @@ def _gecerli_maske(goruntu):
 def _bolge_toplami(toplam, ust, alt, sol, sag):
     """Valid pixel count inside the inclusive box, read off the integral image."""
     return int(
-        toplam[alt + 1, sag + 1]
-        - toplam[ust, sag + 1]
-        - toplam[alt + 1, sol]
-        + toplam[ust, sol]
+        toplam[alt + 1, sag + 1] - toplam[ust, sag + 1] - toplam[alt + 1, sol] + toplam[ust, sol]
     )
 
 
@@ -146,7 +135,7 @@ def _gecerli_alani_kirp(panorama):
             degisti = True
             s_ust, s_alt = ust, alt
 
-    return panorama[ust:alt + 1, sol:sag + 1]
+    return panorama[ust : alt + 1, sol : sag + 1]
 
 
 def _tam_sayi_cevirme(T):
@@ -165,16 +154,14 @@ def _tam_sayi_cevirme(T):
 
 def _cevirerek_yerlestir(goruntu, tx, ty, tuval_genislik, tuval_yukseklik):
     """Copy goruntu into a zeroed canvas at integer offset (tx, ty)."""
-    tuval = np.zeros(
-        (tuval_yukseklik, tuval_genislik) + goruntu.shape[2:], dtype=goruntu.dtype
-    )
+    tuval = np.zeros((tuval_yukseklik, tuval_genislik) + goruntu.shape[2:], dtype=goruntu.dtype)
     h, w = goruntu.shape[:2]
 
     # Clip to the canvas so an offset that pushes the image out never throws.
     y0, y1 = max(0, ty), min(tuval_yukseklik, ty + h)
     x0, x1 = max(0, tx), min(tuval_genislik, tx + w)
     if y1 > y0 and x1 > x0:
-        tuval[y0:y1, x0:x1] = goruntu[y0 - ty:y1 - ty, x0 - tx:x1 - tx]
+        tuval[y0:y1, x0:x1] = goruntu[y0 - ty : y1 - ty, x0 - tx : x1 - tx]
     return tuval
 
 
@@ -234,9 +221,7 @@ def panorama_birlestir(sol_bgr, sag_bgr, H):
     h_sol, w_sol = sol_bgr.shape[:2]
     h_sag, w_sag = sag_bgr.shape[:2]
 
-    tuval_genislik, tuval_yukseklik, T = _tuval_ve_cevirme(
-        H, h_sol, w_sol, h_sag, w_sag
-    )
+    tuval_genislik, tuval_yukseklik, T = _tuval_ve_cevirme(H, h_sol, w_sol, h_sag, w_sag)
     M_sol = T @ H
 
     warp_sol = cv2.warpPerspective(

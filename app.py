@@ -14,7 +14,6 @@ import cv2
 
 from panorama_pipeline import EXAMPLES, PROJECT_DIR, PanoramaError, example_paths, stitch_pair
 
-
 STATIC_DIR = PROJECT_DIR / "static"
 OUTPUT_DIR = PROJECT_DIR / "web_outputs"
 UPLOAD_DIR = PROJECT_DIR / "web_uploads"
@@ -38,7 +37,7 @@ def _safe_join(root, relative_path):
     try:
         candidate.relative_to(root)
     except ValueError:
-        raise ValueError("Invalid path")
+        raise ValueError("Invalid path") from None
     if candidate.is_dir():
         raise ValueError("Invalid path")
     return candidate

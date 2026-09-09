@@ -33,7 +33,7 @@ def _argumanlari_oku(argv=None):
         "--out",
         default="outputs",
         help="Output root directory; each set writes into <out>/<set>/ "
-             "(relative paths are resolved against the project directory).",
+        "(relative paths are resolved against the project directory).",
     )
     parser.add_argument(
         "--headless",

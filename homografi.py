@@ -30,8 +30,7 @@ def donusum_matrisi_hesapla(
     # 1. Safety gate: require at least MIN_MATCH_COUNT matches for a reliable result
     if len(good_matches) < MIN_MATCH_COUNT:
         raise PanoramaError(
-            f"Yeterli eslesme bulunamadi! Gerekli: {MIN_MATCH_COUNT}, "
-            f"Bulunan: {len(good_matches)}"
+            f"Yeterli eslesme bulunamadi! Gerekli: {MIN_MATCH_COUNT}, Bulunan: {len(good_matches)}"
         )
 
     # Collect point coordinates
@@ -56,10 +55,12 @@ def donusum_matrisi_hesapla(
         matchesMask = mask.ravel().tolist()
 
         # Draw inliers (mask == 1) in green
-        draw_params = dict(matchColor=(0, 255, 0),  # Inlier match lines in green
-                           singlePointColor=None,
-                           matchesMask=matchesMask,  # Draw only RANSAC inliers
-                           flags=2)
+        draw_params = dict(
+            matchColor=(0, 255, 0),  # Inlier match lines in green
+            singlePointColor=None,
+            matchesMask=matchesMask,  # Draw only RANSAC inliers
+            flags=2,
+        )
 
         # Draw filtered matches on the image
         ransac_sonrasi_resim = cv2.drawMatches(
@@ -70,12 +71,15 @@ def donusum_matrisi_hesapla(
         cv2.imwrite(ransac_cikti_yolu, ransac_sonrasi_resim)
         _logger.info(
             "RANSAC %d noktadan %d tanesini kusursuz buldu. Temizlenmis resim kaydedildi: %s",
-            len(good_matches), saglam_nokta_sayisi, ransac_cikti_yolu,
+            len(good_matches),
+            saglam_nokta_sayisi,
+            ransac_cikti_yolu,
         )
     else:
         _logger.info(
             "RANSAC %d noktadan %d tanesini kusursuz buldu.",
-            len(good_matches), saglam_nokta_sayisi,
+            len(good_matches),
+            saglam_nokta_sayisi,
         )
 
     return H, mask
