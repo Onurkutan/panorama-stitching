@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Panorama Stitching Studio</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Computer Vision</p>
+          <h1>Panorama Stitching Studio</h1>
+          <p class="intro">SIFT, FLANN, RANSAC ve feather blending adımlarını tek ekranda çalıştıran görsel bir arayüz.</p>
+        </div>
+        <div class="hero-preview" aria-hidden="true">
+          <img src="/media/images/Clock/panorama_birlestirme.jpg" alt="" />
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="controls">
+          <div class="panel-header">
+            <span class="dot"></span>
+            <h2>Girdi</h2>
+          </div>
+
+          <div class="mode-switch" role="tablist" aria-label="Girdi modu">
+            <button class="mode active" type="button" data-mode="example">Örnekler</button>
+            <button class="mode" type="button" data-mode="upload">Yükle</button>
+          </div>
+
+          <div id="examplePanel" class="control-section">
+            <label for="exampleSelect">Veri seti</label>
+            <select id="exampleSelect"></select>
+            <div class="source-grid">
+              <figure>
+                <img id="exampleLeft" alt="Sol örnek görsel" />
+                <figcaption>Sol</figcaption>
+              </figure>
+              <figure>
+                <img id="exampleRight" alt="Sağ örnek görsel" />
+                <figcaption>Sağ</figcaption>
+              </figure>
+            </div>
+          </div>
+
+          <div id="uploadPanel" class="control-section hidden">
+            <label class="drop-zone" for="leftImage">
+              <input id="leftImage" name="leftImage" type="file" accept="image/*" />
+              <span>Sol görsel</span>
+              <strong id="leftFileName">Dosya seç</strong>
+            </label>
+            <label class="drop-zone" for="rightImage">
+              <input id="rightImage" name="rightImage" type="file" accept="image/*" />
+              <span>Sağ görsel</span>
+              <strong id="rightFileName">Dosya seç</strong>
+            </label>
+          </div>
+
+          <button id="runButton" class="run-button" type="button">
+            <span class="run-icon">▶</span>
+            Panoramayı Oluştur
+          </button>
+
+          <div id="status" class="status">Hazır</div>
+        </aside>
+
+        <section class="results">
+          <div class="result-top">
+            <div>
+              <p class="eyebrow">Sonuç</p>
+              <h2>Birleştirilmiş panorama</h2>
+            </div>
+            <a id="downloadButton" class="download disabled" href="#" download>İndir</a>
+          </div>
+
+          <div class="panorama-frame">
+            <img id="panoramaImage" src="/media/images/Clock/panorama_birlestirme.jpg" alt="Panorama sonucu" />
+          </div>
+
+          <div class="metrics" aria-live="polite">
+            <div><span id="mLeft">-</span><small>Sol nokta</small></div>
+            <div><span id="mRight">-</span><small>Sağ nokta</small></div>
+            <div><span id="mMatches">-</span><small>Eşleşme</small></div>
+            <div><span id="mInliers">-</span><small>RANSAC</small></div>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Ara görseller">
+            <button class="tab active" type="button" data-target="matches">Eşleşmeler</button>
+            <button class="tab" type="button" data-target="ransac">RANSAC</button>
+            <button class="tab" type="button" data-target="leftKeypoints">Sol SIFT</button>
+            <button class="tab" type="button" data-target="rightKeypoints">Sağ SIFT</button>
+          </div>
+          <div class="detail-frame">
+            <img id="detailImage" alt="Ara işlem görseli" hidden />
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

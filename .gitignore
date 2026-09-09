@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Unit test / coverage reports
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# mypy / ruff caches
+.mypy_cache/
+.ruff_cache/
+
+# Editors
+.idea/
+.vscode/
+.claude/
+
+# Project-specific: runtime artifacts of the web app
+/web_outputs/
+/web_uploads/
+
+# Project-specific: intermediate visualizations written by the CLI
+# (panoramas themselves are tracked as showcase images)
+images/**/sol_noktalar.jpg
+images/**/sag_noktalar.jpg
+images/**/eslesme_final.jpg
+images/**/ransac_temizlenmis_eslesmeler.jpg
+/ransac_temizlenmis_eslesmeler.jpg
