@@ -78,11 +78,22 @@ package since 4.4), `numpy`.
 
 ## Sample image credits
 
-- `images/SchoolImage`: photographed by the author.
+- `images/SchoolImage`: photographed by Onur Kutan.
 - `images/Clock` (Carnegie Mellon University campus) and `images/test1` (Pont du Gard):
   third-party photographs used here for educational and demonstration purposes only.
   Copyright remains with their respective owners; they are not covered by this
   repository's license. Replace them with your own pairs if you reuse the project.
+
+## Authors
+
+- Onur Kutan ([@Onurkutan](https://github.com/Onurkutan))
+- Ümit Sevil ([@expectation0](https://github.com/expectation0))
+- Mustafa Yaman ([@mustafayymn](https://github.com/mustafayymn))
+- Sudenaz Ustabaş ([@sudenazust](https://github.com/sudenazust))
+
+The stitching pipeline started as a team project; its original repository is
+[expectation0/Panorama-Stitching-CV](https://github.com/expectation0/Panorama-Stitching-CV).
+This repository continues that work with the web UI, hardening and tooling.
 
 ## License
 
