@@ -34,6 +34,9 @@ env/
 /web_outputs/
 /web_uploads/
 
+# Project-specific: default output root of the CLI (python Step1_Sift.py)
+/outputs/
+
 # Project-specific: intermediate visualizations written by the CLI
 # (panoramas themselves are tracked as showcase images)
 images/**/sol_noktalar.jpg

@@ -6,6 +6,20 @@ import numpy as np
 import birlestirme
 import homografi
 import matcher
+from errors import PanoramaError
+from homografi import MIN_MATCH_COUNT
+
+# This is a library module: it never configures logging, the entry points
+# (Step1_Sift.py, app.py) decide how log records are handled.
+# PanoramaError is re-exported so callers keep importing it from here.
+__all__ = [
+    "EXAMPLES",
+    "PROJECT_DIR",
+    "PanoramaError",
+    "example_paths",
+    "get_example",
+    "stitch_pair",
+]
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -33,10 +47,6 @@ EXAMPLES = [
         "right": "s2.jpg",
     },
 ]
-
-
-class PanoramaError(RuntimeError):
-    pass
 
 
 def get_example(example_id):
@@ -74,18 +84,46 @@ def _detect_features(image):
     return keypoints, descriptors, drawn
 
 
+def _kucult(image, olcek):
+    """Downscale with INTER_AREA, the right filter for shrinking."""
+    yeni_genislik = max(1, int(round(image.shape[1] * olcek)))
+    yeni_yukseklik = max(1, int(round(image.shape[0] * olcek)))
+    return cv2.resize(image, (yeni_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
+
+
+def _girisleri_olcekle(left, right, max_side):
+    """Shrink both inputs by one common factor when either side is too large.
+
+    Returns (left, right, scale); scale is 1.0 when nothing was resized.
+    """
+    if not max_side:
+        return left, right, 1.0
+    en_buyuk = max(left.shape[0], left.shape[1], right.shape[0], right.shape[1])
+    if en_buyuk <= max_side:
+        return left, right, 1.0
+    olcek = float(max_side) / float(en_buyuk)
+    return _kucult(left, olcek), _kucult(right, olcek), olcek
+
+
 def _write_image(path, image):
     ok = cv2.imwrite(str(path), image)
     if not ok:
         raise PanoramaError(f"Cikti kaydedilemedi: {path.name}")
 
 
-def stitch_pair(left_path, right_path, output_dir):
+def stitch_pair(left_path, right_path, output_dir, max_side=None):
+    """Run the full pipeline on one image pair and write the outputs.
+
+    max_side: optional pixel cap on the longest side of the inputs. When the
+    pair is larger, both images are downscaled by the same factor before
+    detection (the applied factor is reported as "inputScale").
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     left = _read_image(left_path)
     right = _read_image(right_path)
+    left, right, input_scale = _girisleri_olcekle(left, right, max_side)
 
     kp_left, des_left, left_keypoints = _detect_features(left)
     kp_right, des_right, right_keypoints = _detect_features(right)
@@ -96,9 +134,10 @@ def stitch_pair(left_path, right_path, output_dir):
     _write_image(right_keypoints_path, right_keypoints)
 
     good_matches = matcher.match_features(kp_left, des_left, kp_right, des_right)
-    if len(good_matches) < 10:
+    if len(good_matches) < MIN_MATCH_COUNT:
         raise PanoramaError(
-            f"Yeterli eslesme bulunamadi. Gerekli: 10, bulunan: {len(good_matches)}"
+            f"Yeterli eslesme bulunamadi. Gerekli: {MIN_MATCH_COUNT}, "
+            f"bulunan: {len(good_matches)}"
         )
 
     match_preview = cv2.drawMatches(
@@ -141,6 +180,7 @@ def stitch_pair(left_path, right_path, output_dir):
             "inliers": inliers,
             "panoramaWidth": int(panorama.shape[1]),
             "panoramaHeight": int(panorama.shape[0]),
+            "inputScale": round(float(input_scale), 4),
         },
         "files": {
             "panorama": panorama_path.name,

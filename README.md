@@ -53,22 +53,26 @@ Generated files are written to `web_outputs/<job-id>/` and uploads to `web_uploa
 ### Command line
 
 ```bash
-HEADLESS=1 python Step1_Sift.py
+python Step1_Sift.py --headless            # all three example sets
+python Step1_Sift.py --sets clock street   # a subset
+python Step1_Sift.py --out /tmp/pano       # different output root
 ```
 
-Processes the three example folders under `images/` and writes the panorama and the
-intermediate visualizations next to the source images. Without `HEADLESS=1` the last
-set is also shown in OpenCV windows.
+Each set is written to `outputs/<set>/` (panorama, keypoint images, raw and
+RANSAC-filtered matches). Without `--headless` (or `HEADLESS=1`) the last panorama is
+also shown in an OpenCV window. Failures such as too few matches are reported per set
+and the remaining sets still run.
 
 ## Project layout
 
 ```
 app.py                  stdlib HTTP server: static files, /api/examples, /api/stitch
-panorama_pipeline.py    stitch_pair(): the pipeline used by the web app
+panorama_pipeline.py    stitch_pair(): the pipeline shared by the web app and the CLI
 Step1_Sift.py           CLI entry point over the example datasets
 matcher.py              FLANN kNN matching + Lowe ratio test
 homografi.py            RANSAC homography + inlier visualization
 birlestirme.py          warping, feather blending, auto-crop
+errors.py               PanoramaError raised by every stage on unusable input
 index.html, static/     web UI (vanilla JS, no build step)
 images/                 example image pairs and their stitched panoramas
 ```
