@@ -31,17 +31,46 @@ def _gecerli_maske(goruntu):
     return np.any(goruntu > 0, axis=2).astype(np.uint8) * 255
 
 
+def _bolge_toplami(toplam, ust, alt, sol, sag):
+    """Valid pixel count inside the inclusive box, read off the integral image."""
+    return int(
+        toplam[alt + 1, sag + 1]
+        - toplam[ust, sag + 1]
+        - toplam[alt + 1, sol]
+        + toplam[ust, sol]
+    )
+
+
+def _satir_orani(toplam, satir, sol, sag):
+    """Occupancy ratio of one row over the column range [sol, sag]."""
+    return _bolge_toplami(toplam, satir, satir, sol, sag) / (sag - sol + 1)
+
+
+def _sutun_orani(toplam, sutun, ust, alt):
+    """Occupancy ratio of one column over the row range [ust, alt]."""
+    return _bolge_toplami(toplam, ust, alt, sutun, sutun) / (alt - ust + 1)
+
+
 def _gecerli_alani_kirp(panorama):
     """
     Gradually trim black borders after warping using edge occupancy ratios.
     More effective than a simple bounding box, but only removes sparse edges
     to avoid over-cropping the panorama.
+
+    Trimming order, the 0.8 threshold and the resulting crop box are exactly
+    the same as the straightforward version. The only difference is that the
+    edge occupancy ratios come from a 2-D prefix sum (integral image) built
+    once, so every step costs O(1) instead of re-reducing the whole remaining
+    region.
     """
     maske = _gecerli_maske(panorama)
     if not np.any(maske):
         return panorama
 
-    doluluk = maske > 0
+    doluluk = (maske > 0).astype(np.uint8)
+    # toplam[y, x] = number of valid pixels in doluluk[:y, :x] (zero padded).
+    toplam = cv2.integral(doluluk, sdepth=cv2.CV_32S)
+
     ust, alt = 0, doluluk.shape[0] - 1
     sol, sag = 0, doluluk.shape[1] - 1
     esik = 0.8
@@ -49,28 +78,29 @@ def _gecerli_alani_kirp(panorama):
 
     while degisti and ust < alt and sol < sag:
         degisti = False
-        satir_oranlari = doluluk[ust:alt + 1, sol:sag + 1].mean(axis=1)
-        sutun_oranlari = doluluk[ust:alt + 1, sol:sag + 1].mean(axis=0)
+        # The plain version computed both ratio arrays once per outer pass, so
+        # the column loops read their first value from the row window as it was
+        # BEFORE the row loops trimmed it, and only refresh after a step. Keep
+        # that behaviour by tracking which row window the column ratio reflects.
+        s_ust, s_alt = ust, alt
 
-        while ust < alt and satir_oranlari[0] < esik:
+        while ust < alt and _satir_orani(toplam, ust, sol, sag) < esik:
             ust += 1
             degisti = True
-            satir_oranlari = doluluk[ust:alt + 1, sol:sag + 1].mean(axis=1)
 
-        while ust < alt and satir_oranlari[-1] < esik:
+        while ust < alt and _satir_orani(toplam, alt, sol, sag) < esik:
             alt -= 1
             degisti = True
-            satir_oranlari = doluluk[ust:alt + 1, sol:sag + 1].mean(axis=1)
 
-        while sol < sag and sutun_oranlari[0] < esik:
+        while sol < sag and _sutun_orani(toplam, sol, s_ust, s_alt) < esik:
             sol += 1
             degisti = True
-            sutun_oranlari = doluluk[ust:alt + 1, sol:sag + 1].mean(axis=0)
+            s_ust, s_alt = ust, alt
 
-        while sol < sag and sutun_oranlari[-1] < esik:
+        while sol < sag and _sutun_orani(toplam, sag, s_ust, s_alt) < esik:
             sag -= 1
             degisti = True
-            sutun_oranlari = doluluk[ust:alt + 1, sol:sag + 1].mean(axis=0)
+            s_ust, s_alt = ust, alt
 
     return panorama[ust:alt + 1, sol:sag + 1]
 
