@@ -1,11 +1,16 @@
+import json
+import logging
+import mimetypes
+import re
+import shutil
+import sys
+import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
-import json
-import mimetypes
-import re
-import sys
-import uuid
+
+import cv2
 
 from panorama_pipeline import EXAMPLES, PROJECT_DIR, PanoramaError, example_paths, stitch_pair
 
@@ -14,21 +19,58 @@ STATIC_DIR = PROJECT_DIR / "static"
 OUTPUT_DIR = PROJECT_DIR / "web_outputs"
 UPLOAD_DIR = PROJECT_DIR / "web_uploads"
 
+# Only these top-level segments may be served under /media/<segment>/...
+MEDIA_ROOTS = {
+    "images": PROJECT_DIR / "images",
+    "web_outputs": OUTPUT_DIR,
+    "web_uploads": UPLOAD_DIR,
+}
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+JOB_TTL_HOURS = 24
+
+CONNECTION_ERRORS = (ConnectionAbortedError, BrokenPipeError, ConnectionResetError)
+
 
 def _safe_join(root, relative_path):
-    path = (root / relative_path).resolve()
-    if not str(path).startswith(str(root.resolve())):
+    root = root.resolve()
+    candidate = (root / relative_path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
         raise ValueError("Invalid path")
-    return path
+    if candidate.is_dir():
+        raise ValueError("Invalid path")
+    return candidate
+
+
+def _sweep_job_dirs():
+    """Best-effort removal of job directories older than JOB_TTL_HOURS."""
+    cutoff = time.time() - JOB_TTL_HOURS * 3600
+    for base in (OUTPUT_DIR, UPLOAD_DIR):
+        try:
+            entries = list(base.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                    shutil.rmtree(entry, ignore_errors=True)
+            except OSError:
+                continue
 
 
 def _json_response(handler, payload, status=200):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        handler.end_headers()
+        handler.wfile.write(body)
+    except CONNECTION_ERRORS:
+        handler.close_connection = True
 
 
 def _parse_disposition(header_value):
@@ -39,6 +81,11 @@ def _parse_disposition(header_value):
 
 
 class PanoramaHandler(BaseHTTPRequestHandler):
+    # Socket-level timeout so a client that opens a connection and stalls
+    # (e.g. lying Content-Length, never sends the rest of the body) cannot
+    # pin a worker thread forever.
+    timeout = 30
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -51,30 +98,64 @@ class PanoramaHandler(BaseHTTPRequestHandler):
 
         if path.startswith("/static/"):
             try:
-                return self._serve_file(_safe_join(STATIC_DIR, path.removeprefix("/static/")))
+                target = _safe_join(STATIC_DIR, path.removeprefix("/static/"))
             except ValueError:
                 return self._not_found()
+            return self._serve_file(target)
 
         if path.startswith("/media/"):
-            try:
-                return self._serve_file(_safe_join(PROJECT_DIR, path.removeprefix("/media/")))
-            except ValueError:
-                return self._not_found()
+            return self._serve_media(path.removeprefix("/media/"))
 
         if path.startswith("/generated/"):
             try:
-                return self._serve_file(_safe_join(OUTPUT_DIR, path.removeprefix("/generated/")))
+                target = _safe_join(OUTPUT_DIR, path.removeprefix("/generated/"))
             except ValueError:
                 return self._not_found()
+            return self._serve_file(target, cache_control="no-store")
 
         return self._not_found()
+
+    def _serve_media(self, rel_path):
+        root_name, _sep, rest = rel_path.partition("/")
+        root = MEDIA_ROOTS.get(root_name)
+        if root is None:
+            return self._not_found()
+        try:
+            target = _safe_join(root, rest)
+        except ValueError:
+            return self._not_found()
+        cache_control = "no-store" if root_name == "web_uploads" else None
+        return self._serve_file(target, cache_control=cache_control)
 
     def do_POST(self):
         if urlparse(self.path).path != "/api/stitch":
             return self._not_found()
 
+        _sweep_job_dirs()
+
+        content_length_header = self.headers.get("Content-Length")
         try:
-            fields, files = self._read_multipart()
+            content_length = int(content_length_header)
+            if content_length < 0:
+                raise ValueError("negative content length")
+        except (TypeError, ValueError):
+            self.close_connection = True
+            return _json_response(
+                self,
+                {"ok": False, "error": "Icerik uzunlugu eksik ya da gecersiz."},
+                status=400,
+            )
+
+        if content_length > MAX_UPLOAD_BYTES:
+            self.close_connection = True
+            return _json_response(
+                self,
+                {"ok": False, "error": "Yuklenen veri cok buyuk (maksimum 25 MB)."},
+                status=413,
+            )
+
+        try:
+            fields, files = self._read_multipart(content_length)
             job_id = uuid.uuid4().hex[:12]
             job_dir = OUTPUT_DIR / job_id
             job_dir.mkdir(parents=True, exist_ok=True)
@@ -113,24 +194,38 @@ class PanoramaHandler(BaseHTTPRequestHandler):
             )
         except PanoramaError as exc:
             return _json_response(self, {"ok": False, "error": str(exc)}, status=422)
-        except Exception as exc:
-            return _json_response(self, {"ok": False, "error": f"Beklenmeyen hata: {exc}"}, status=500)
+        except Exception:
+            logging.exception("[web] /api/stitch isleminde beklenmeyen hata")
+            return _json_response(
+                self,
+                {"ok": False, "error": "Beklenmeyen bir hata olustu."},
+                status=500,
+            )
 
-    def _serve_file(self, path):
+    def _serve_file(self, path, cache_control=None):
         if not path.exists() or not path.is_file():
             return self._not_found()
 
-        body = path.read_bytes()
-        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = path.read_bytes()
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if cache_control:
+                self.send_header("Cache-Control", cache_control)
+            self.end_headers()
+            self.wfile.write(body)
+        except CONNECTION_ERRORS:
+            self.close_connection = True
 
     def _not_found(self):
-        self.send_response(404)
-        self.end_headers()
+        try:
+            self.send_response(404)
+            self.end_headers()
+        except CONNECTION_ERRORS:
+            self.close_connection = True
 
     def _examples_payload(self):
         payload = []
@@ -146,14 +241,13 @@ class PanoramaHandler(BaseHTTPRequestHandler):
             )
         return payload
 
-    def _read_multipart(self):
+    def _read_multipart(self, content_length):
         content_type = self.headers.get("Content-Type", "")
         match = re.search(r"boundary=([^;]+)", content_type)
         if not match:
             raise PanoramaError("Form verisi okunamadi.")
 
         boundary = match.group(1).strip('"').encode("utf-8")
-        content_length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(content_length)
         fields = {}
         files = {}
@@ -198,17 +292,41 @@ class PanoramaHandler(BaseHTTPRequestHandler):
             suffix = ".jpg"
         destination = destination.with_suffix(suffix)
         destination.write_bytes(upload["content"])
+
+        image = cv2.imread(str(destination))
+        if image is None:
+            try:
+                destination.unlink()
+            except OSError:
+                pass
+            raise PanoramaError("Yuklenen dosya bir gorsel olarak okunamadi.")
+
         return destination
 
     def log_message(self, format, *args):
         print(f"[web] {self.address_string()} - {format % args}")
 
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # A client that aborts mid-request (RST) can trip an exception in
+        # socketserver's own request-reading loop, before our handler code
+        # ever runs (e.g. while reading the next request line). That is a
+        # normal client disconnect, not a bug, so keep it out of the log.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, CONNECTION_ERRORS):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
     UPLOAD_DIR.mkdir(exist_ok=True)
+    _sweep_job_dirs()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    server = ThreadingHTTPServer(("127.0.0.1", port), PanoramaHandler)
+    server = QuietThreadingHTTPServer(("127.0.0.1", port), PanoramaHandler)
     print(f"Panorama arayuzu hazir: http://127.0.0.1:{port}")
     server.serve_forever()
 
