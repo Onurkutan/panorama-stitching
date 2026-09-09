@@ -34,7 +34,11 @@ function setStatus(message, isError = false) {
 
 function setMode(mode) {
   state.mode = mode;
-  els.modes.forEach((button) => button.classList.toggle("active", button.dataset.mode === mode));
+  els.modes.forEach((button) => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
   els.examplePanel.classList.toggle("hidden", mode !== "example");
   els.uploadPanel.classList.toggle("hidden", mode !== "upload");
 }
@@ -56,7 +60,11 @@ function setMetrics(metrics) {
 function selectDetail(target) {
   const src = state.resultFiles[target];
   if (!src) return;
-  els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.target === target));
+  els.tabs.forEach((tab) => {
+    const active = tab.dataset.target === target;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
   els.detailImage.src = `${src}?t=${Date.now()}`;
   els.detailImage.hidden = false;
 }

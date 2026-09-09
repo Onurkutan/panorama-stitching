@@ -27,8 +27,8 @@
           </div>
 
           <div class="mode-switch" role="tablist" aria-label="Girdi modu">
-            <button class="mode active" type="button" data-mode="example">Örnekler</button>
-            <button class="mode" type="button" data-mode="upload">Yükle</button>
+            <button class="mode active" type="button" role="tab" aria-selected="true" data-mode="example">Örnekler</button>
+            <button class="mode" type="button" role="tab" aria-selected="false" data-mode="upload">Yükle</button>
           </div>
 
           <div id="examplePanel" class="control-section">
@@ -88,10 +88,10 @@
           </div>
 
           <div class="tabs" role="tablist" aria-label="Ara görseller">
-            <button class="tab active" type="button" data-target="matches">Eşleşmeler</button>
-            <button class="tab" type="button" data-target="ransac">RANSAC</button>
-            <button class="tab" type="button" data-target="leftKeypoints">Sol SIFT</button>
-            <button class="tab" type="button" data-target="rightKeypoints">Sağ SIFT</button>
+            <button class="tab active" type="button" role="tab" aria-selected="true" data-target="matches">Eşleşmeler</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-target="ransac">RANSAC</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-target="leftKeypoints">Sol SIFT</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-target="rightKeypoints">Sağ SIFT</button>
           </div>
           <div class="detail-frame">
             <img id="detailImage" alt="Ara işlem görseli" hidden />
