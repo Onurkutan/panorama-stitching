@@ -98,16 +98,12 @@ package since 4.4), `numpy`.
   Copyright remains with their respective owners; they are not covered by this
   repository's license. Replace them with your own pairs if you reuse the project.
 
-## Authors
+## Origin
 
-- Onur Kutan ([@Onurkutan](https://github.com/Onurkutan))
-- Ümit Sevil ([@expectation0](https://github.com/expectation0))
-- Mustafa Yaman ([@mustafayymn](https://github.com/mustafayymn))
-- Sudenaz Ustabaş ([@sudenazust](https://github.com/sudenazust))
-
-The stitching pipeline started as a team project; its original repository is
-[expectation0/Panorama-Stitching-CV](https://github.com/expectation0/Panorama-Stitching-CV).
-This repository continues that work with the web UI, hardening and tooling.
+The stitching pipeline started as a university team project
+([expectation0/Panorama-Stitching-CV](https://github.com/expectation0/Panorama-Stitching-CV)).
+This repository is maintained by Onur Kutan and continues that work with the web UI,
+hardening, tests and tooling.
 
 ## License
 
