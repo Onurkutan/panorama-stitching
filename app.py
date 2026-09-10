@@ -111,6 +111,11 @@ class PanoramaHandler(BaseHTTPRequestHandler):
         if path.startswith("/media/"):
             return self._serve_media(path.removeprefix("/media/"))
 
+        # The page uses site-relative image paths so it can also be served as a
+        # static site (GitHub Pages); map them onto the images media root.
+        if path.startswith("/images/"):
+            return self._serve_media(path.removeprefix("/"))
+
         if path.startswith("/generated/"):
             try:
                 target = _safe_join(OUTPUT_DIR, path.removeprefix("/generated/"))

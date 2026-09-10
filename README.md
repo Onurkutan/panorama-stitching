@@ -12,6 +12,17 @@ intermediate step.
 | --- | --- | --- |
 | ![Clock panorama](images/Clock/panorama_birlestirme.jpg) | ![School panorama](images/SchoolImage/panorama_birlestirme.jpg) | ![Aqueduct panorama](images/test1/panorama_birlestirme.jpg) |
 
+## Live demo
+
+[onurkutan.github.io/panorama-stitching](https://onurkutan.github.io/panorama-stitching/)
+runs the very same Python modules inside the browser through
+[Pyodide](https://pyodide.org) (CPython and OpenCV compiled to WebAssembly), so no server
+is involved and uploaded photos never leave your machine. The first visit downloads about
+20 MB of runtime; after that a pair stitches in a few seconds. Inputs are downscaled to
+1400 px on the long side there. The page detects whether the Python server is available
+and otherwise switches to the in-browser pipeline, so the same `index.html` and `static/`
+serve both.
+
 ## Pipeline
 
 1. **Feature detection** (`Step1_Sift.py`, `panorama_pipeline.py`): grayscale conversion,

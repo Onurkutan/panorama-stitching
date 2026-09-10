@@ -130,3 +130,28 @@ def test_stitch_downscales_large_inputs(live_server, multipart_body, monkeypatch
     assert payload["ok"] is True
     assert 0 < payload["metrics"]["inputScale"] < 1
     assert payload["metrics"]["panoramaWidth"] < 1300
+
+
+def test_images_served_site_relative(live_server):
+    with urllib.request.urlopen(f"{live_server}/images/Clock/sol1.jpg") as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "image/jpeg"
+
+
+def test_static_examples_match_pipeline():
+    # static/app.js carries a copy of EXAMPLES for the server-less (Pyodide) mode.
+    import re
+
+    import panorama_pipeline
+
+    source = (panorama_pipeline.PROJECT_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    pattern = re.compile(
+        r'id: "(?P<id>\w+)", title: "(?P<title>[^"]+)", folder: "(?P<folder>[^"]+)", '
+        r'left: "(?P<left>[^"]+)", right: "(?P<right>[^"]+)"'
+    )
+    found = [m.groupdict() for m in pattern.finditer(source)]
+    expected = [
+        {k: example[k] for k in ("id", "title", "folder", "left", "right")}
+        for example in panorama_pipeline.EXAMPLES
+    ]
+    assert found == expected
