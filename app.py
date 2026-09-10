@@ -28,6 +28,12 @@ MEDIA_ROOTS = {
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 JOB_TTL_HOURS = 24
 
+# Longest side (in pixels) the web pipeline works on. Larger inputs are
+# downscaled by a common factor before detection: phone photos of 4000 px or
+# more would otherwise cost many seconds of SIFT time and hundreds of MB per
+# request for no visible gain in the browser.
+MAX_INPUT_SIDE = 2400
+
 CONNECTION_ERRORS = (ConnectionAbortedError, BrokenPipeError, ConnectionResetError)
 
 
@@ -176,7 +182,7 @@ class PanoramaHandler(BaseHTTPRequestHandler):
                     "right": f"/media/{right_path.relative_to(PROJECT_DIR).as_posix()}",
                 }
 
-            result = stitch_pair(left_path, right_path, job_dir)
+            result = stitch_pair(left_path, right_path, job_dir, max_side=MAX_INPUT_SIDE)
             files_payload = {
                 name: f"/generated/{job_id}/{filename}"
                 for name, filename in result["files"].items()

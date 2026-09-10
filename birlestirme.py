@@ -8,6 +8,34 @@ from errors import PanoramaError
 # means the homography is degenerate, so refuse it before allocating it.
 MAX_TUVAL_KATSAYISI = 8
 
+# Interpolating a warp mixes the black canvas background into the pixels just
+# inside the image border, so the outermost ring of a warped image is a dark
+# fringe rather than real content. Warped validity masks are eroded by this
+# radius to drop it.
+MASKE_ASINDIRMA = 2
+
+# Bounds for the per-channel exposure gain. A real exposure difference between
+# two shots of the same scene is small; anything outside this range says the
+# overlap statistics are not comparable (moving subject, clipped highlights),
+# and scaling by it would do more harm than the mismatch it corrects.
+POZLAMA_ALT_SINIR = 0.8
+POZLAMA_UST_SINIR = 1.25
+
+# Feather band around the seam. The seam runs along the middle of the overlap
+# (equidistant from both image borders) and the two sources are mixed only
+# within this half-width of it, proportional to the overlap width and clamped
+# to a pixel range. Mixing the whole overlap instead would blend anything that
+# moved between the two shots into a semi-transparent ghost.
+DIKIS_BANT_PAYI = 15
+DIKIS_BANT_EN_AZ = 15
+DIKIS_BANT_EN_COK = 60
+
+# Auto-crop: an edge row/column is trimmed only when it is emptier than this
+# ratio AND emptier than the box it borders, and never past this fraction of
+# the original size. See _gecerli_alani_kirp.
+KIRPMA_ESIGI = 0.8
+KIRPMA_EN_AZ_ORAN = 0.25
+
 
 def _homografiyi_dogrula(H):
     """Reject homographies that cannot produce a usable canvas."""
@@ -63,8 +91,176 @@ def _tuval_ve_cevirme(H, sol_yukseklik, sol_genislik, sag_yukseklik, sag_genisli
 
 
 def _gecerli_maske(goruntu):
-    """Separate valid image pixels from black background."""
+    """Separate valid image pixels from black background.
+
+    Only a fallback for callers that have no warped mask at hand: a dark but
+    real scene pixel is indistinguishable from background this way, and the
+    interpolation fringe around a warp counts as valid. Prefer the masks
+    produced by _warp_maskesi / _yerlestirme_maskesi.
+    """
     return np.any(goruntu > 0, axis=2).astype(np.uint8) * 255
+
+
+def _maske_asindir(maske, yaricap=MASKE_ASINDIRMA):
+    """Shave `yaricap` pixels off a 0/255 mask to drop the interpolation fringe.
+
+    cv2.erode leaves the canvas border untouched, which is what we want here:
+    where the warped image runs past the edge of the canvas, the pixels at that
+    edge are interior image content and carry no fringe. An image so small that
+    the erosion would erase it keeps its mask instead.
+    """
+    if yaricap <= 0:
+        return maske
+    cekirdek = cv2.getStructuringElement(cv2.MORPH_RECT, (2 * yaricap + 1, 2 * yaricap + 1))
+    asinmis = cv2.erode(maske, cekirdek)
+    if cv2.countNonZero(asinmis) == 0:
+        return maske
+    return asinmis
+
+
+def _warp_maskesi(yukseklik, genislik, M, tuval_genislik, tuval_yukseklik):
+    """Validity mask of an image warped by M, as an eroded 0/255 canvas mask.
+
+    The mask is warped with INTER_NEAREST so it stays binary, then eroded: the
+    image itself is resampled with a smoothing kernel that pulls the black
+    background into the border pixels, and those must not count as content.
+    """
+    dolu = np.full((yukseklik, genislik), 255, dtype=np.uint8)
+    maske = cv2.warpPerspective(dolu, M, (tuval_genislik, tuval_yukseklik), flags=cv2.INTER_NEAREST)
+    return _maske_asindir(maske)
+
+
+def _yerlestirme_maskesi(yukseklik, genislik, tx, ty, tuval_genislik, tuval_yukseklik):
+    """Validity mask of an image copied into the canvas at an integer offset.
+
+    A slice copy resamples nothing, so this rectangle is exact and needs no
+    erosion -- unlike the warped mask above.
+    """
+    dolu = np.full((yukseklik, genislik), 255, dtype=np.uint8)
+    return _cevirerek_yerlestir(dolu, tx, ty, tuval_genislik, tuval_yukseklik)
+
+
+def _kutu(maske):
+    """Bounding box (ust, alt, sol, sag) of the non-zero pixels, end-exclusive."""
+    satirlar = np.flatnonzero(maske.any(axis=1))
+    if satirlar.size == 0:
+        return None
+    sutunlar = np.flatnonzero(maske.any(axis=0))
+    return int(satirlar[0]), int(satirlar[-1]) + 1, int(sutunlar[0]), int(sutunlar[-1]) + 1
+
+
+def _pozlama_esitle(warp_sol, warp_sag, maske_sol, maske_sag):
+    """Scale the warped left image so its overlap exposure matches the right one.
+
+    Two shots of the same scene rarely share an exposure; the gain is a single
+    per-channel factor measured on the overlap, applied to the whole left image
+    through a lookup table so the corrected part never disagrees with the rest.
+    """
+    ortusme = cv2.bitwise_and(maske_sol, maske_sag)
+    if cv2.countNonZero(ortusme) == 0:
+        return warp_sol
+
+    sol_ortalama = cv2.mean(warp_sol, mask=ortusme)[:3]
+    sag_ortalama = cv2.mean(warp_sag, mask=ortusme)[:3]
+
+    kazanclar = []
+    for sol_kanal, sag_kanal in zip(sol_ortalama, sag_ortalama, strict=True):
+        # A near-black overlap carries no exposure information; dividing by it
+        # would produce a huge gain from rounding noise alone.
+        if sol_kanal < 1.0:
+            kazanclar.append(1.0)
+            continue
+        kazanclar.append(
+            float(np.clip(sag_kanal / sol_kanal, POZLAMA_ALT_SINIR, POZLAMA_UST_SINIR))
+        )
+
+    if all(abs(kazanc - 1.0) < 1e-3 for kazanc in kazanclar):
+        return warp_sol
+
+    olcekli = np.arange(256, dtype=np.float32)[None, :, None] * np.float32(kazanclar)
+    lut = np.clip(np.rint(olcekli), 0, 255).astype(np.uint8)
+    return cv2.LUT(warp_sol, lut)
+
+
+def _dikis_yari_banti(ortusme_genisligi):
+    """Half-width in pixels of the mixing band around the seam."""
+    return int(np.clip(ortusme_genisligi // DIKIS_BANT_PAYI, DIKIS_BANT_EN_AZ, DIKIS_BANT_EN_COK))
+
+
+def _mesafe_agirligi(maske_sol, maske_sag, kutu):
+    """Feather weights for the left image inside the overlap box.
+
+    d_sol and d_sag are each pixel's distances to the border of the left and
+    right image. Where they are equal lies the seam: the line that stays as
+    far as possible from both image borders, so neither outline ever shows up
+    as a hard edge and the direction of the ramp follows the geometry (a left
+    image that actually landed on the right is handled by the same formula).
+    Moving away from the seam, d_sol - d_sag changes by about two per pixel, so
+    the weight reaches 0 or 1 exactly `yari_bant` pixels out; outside the band
+    each side is a single source, which keeps anything that moved between the
+    two shots from being blended into a ghost.
+
+    The distance transforms are computed on the whole canvas -- cropping first
+    would make the box edges look like image borders and ramp the weights in
+    the wrong place -- but only the box is kept, one at a time, so at most one
+    full-canvas float array exists at a time.
+    """
+    ust, alt, sol, sag = kutu
+    d_sol = cv2.distanceTransform(maske_sol, cv2.DIST_L2, 3)[ust:alt, sol:sag].copy()
+    d_sag = cv2.distanceTransform(maske_sag, cv2.DIST_L2, 3)[ust:alt, sol:sag].copy()
+
+    yari_bant = _dikis_yari_banti(sag - sol)
+    d_sol -= d_sag
+    d_sol /= 4.0 * yari_bant
+    d_sol += 0.5
+    return np.clip(d_sol, 0.0, 1.0, out=d_sol)
+
+
+def _tuy_birlestir(warp_sol, warp_sag, maske_sol=None, maske_sag=None):
+    """
+    Feather-blend two warped BGR images along the seam of their overlap.
+
+    The seam is the line equidistant from both image borders and the sources
+    are mixed only in a narrow band around it (see _mesafe_agirligi), which
+    makes the transition independent of image content and of which side the
+    left image actually landed on, keeps the warped outline from showing as a
+    hard edge, and leaves moving subjects unblended outside the band.
+
+    Float work is confined to the bounding box of the overlap; everything
+    outside it is a uint8 copy.
+    """
+    if maske_sol is None:
+        maske_sol = _gecerli_maske(warp_sol)
+    if maske_sag is None:
+        maske_sag = _gecerli_maske(warp_sag)
+
+    # Exclusive regions first, as a plain uint8 masked copy: the right image
+    # overwrites the overlap, which the feathered mix then replaces.
+    sonuc = np.zeros_like(warp_sol)
+    sonuc = cv2.copyTo(warp_sol, maske_sol, sonuc)
+    sonuc = cv2.copyTo(warp_sag, maske_sag, sonuc)
+
+    ortusme = cv2.bitwise_and(maske_sol, maske_sag)
+    kutu = _kutu(ortusme)
+    if kutu is None:
+        return sonuc
+
+    ust, alt, sol, sag = kutu
+    agirlik = _mesafe_agirligi(maske_sol, maske_sag, kutu)[..., None]
+
+    karisim = warp_sol[ust:alt, sol:sag].astype(np.float32)
+    karisim *= agirlik
+    sag_pay = warp_sag[ust:alt, sol:sag].astype(np.float32)
+    sag_pay *= 1.0 - agirlik
+    karisim += sag_pay
+    del sag_pay
+
+    np.copyto(
+        sonuc[ust:alt, sol:sag],
+        np.clip(karisim, 0, 255).astype(np.uint8),
+        where=(ortusme[ust:alt, sol:sag] > 0)[..., None],
+    )
+    return sonuc
 
 
 def _bolge_toplami(toplam, ust, alt, sol, sag):
@@ -84,19 +280,32 @@ def _sutun_orani(toplam, sutun, ust, alt):
     return _bolge_toplami(toplam, ust, alt, sutun, sutun) / (alt - ust + 1)
 
 
-def _gecerli_alani_kirp(panorama):
-    """
-    Gradually trim black borders after warping using edge occupancy ratios.
-    More effective than a simple bounding box, but only removes sparse edges
-    to avoid over-cropping the panorama.
+def _kutu_orani(toplam, ust, alt, sol, sag):
+    """Occupancy ratio of the whole crop box."""
+    return _bolge_toplami(toplam, ust, alt, sol, sag) / ((alt - ust + 1) * (sag - sol + 1))
 
-    Trimming order, the 0.8 threshold and the resulting crop box are exactly
-    the same as the straightforward version. The only difference is that the
-    edge occupancy ratios come from a 2-D prefix sum (integral image) built
-    once, so every step costs O(1) instead of re-reducing the whole remaining
-    region.
+
+def _gecerli_alani_kirp(panorama, maske=None):
     """
-    maske = _gecerli_maske(panorama)
+    Trim the black border a warp leaves around the panorama.
+
+    An edge row or column is dropped only when it is emptier than KIRPMA_ESIGI
+    *and* emptier than the box it borders. The second condition is what keeps
+    the rule stable: a hole pattern that runs through the whole image (every
+    third row black, one black half) is no worse at the edge than in the
+    middle, so trimming it away would not improve anything and does not start.
+    A hard floor of KIRPMA_EN_AZ_ORAN of each side caps the damage of any
+    remaining pathological case, and the passes are bounded at two. On the
+    bundled examples this lands on the same crop box as the older unbounded
+    loop; what it changes is what happens on masks that loop collapsed on.
+
+    All occupancy ratios are read off a 2-D prefix sum (integral image) built
+    once, so every query costs O(1) regardless of the region size. Pass the
+    union of the two validity masks as `maske`; without it the mask is guessed
+    from the pixels, and dark scene content counts as border.
+    """
+    if maske is None:
+        maske = _gecerli_maske(panorama)
     if not np.any(maske):
         return panorama
 
@@ -104,36 +313,40 @@ def _gecerli_alani_kirp(panorama):
     # toplam[y, x] = number of valid pixels in doluluk[:y, :x] (zero padded).
     toplam = cv2.integral(doluluk, sdepth=cv2.CV_32S)
 
-    ust, alt = 0, doluluk.shape[0] - 1
-    sol, sag = 0, doluluk.shape[1] - 1
-    esik = 0.8
-    degisti = True
+    yukseklik, genislik = doluluk.shape
+    ust, alt = 0, yukseklik - 1
+    sol, sag = 0, genislik - 1
+    en_az_yukseklik = max(1, int(yukseklik * KIRPMA_EN_AZ_ORAN))
+    en_az_genislik = max(1, int(genislik * KIRPMA_EN_AZ_ORAN))
 
-    while degisti and ust < alt and sol < sag:
+    def bos_mu(oran, kutu_orani):
+        return oran < KIRPMA_ESIGI and oran < kutu_orani
+
+    for _ in range(2):
         degisti = False
-        # The plain version computed both ratio arrays once per outer pass, so
-        # the column loops read their first value from the row window as it was
-        # BEFORE the row loops trimmed it, and only refresh after a step. Keep
-        # that behaviour by tracking which row window the column ratio reflects.
-        s_ust, s_alt = ust, alt
 
-        while ust < alt and _satir_orani(toplam, ust, sol, sag) < esik:
-            ust += 1
+        while alt - ust + 1 > en_az_yukseklik:
+            kutu = _kutu_orani(toplam, ust, alt, sol, sag)
+            if bos_mu(_satir_orani(toplam, ust, sol, sag), kutu):
+                ust += 1
+            elif bos_mu(_satir_orani(toplam, alt, sol, sag), kutu):
+                alt -= 1
+            else:
+                break
             degisti = True
 
-        while ust < alt and _satir_orani(toplam, alt, sol, sag) < esik:
-            alt -= 1
+        while sag - sol + 1 > en_az_genislik:
+            kutu = _kutu_orani(toplam, ust, alt, sol, sag)
+            if bos_mu(_sutun_orani(toplam, sol, ust, alt), kutu):
+                sol += 1
+            elif bos_mu(_sutun_orani(toplam, sag, ust, alt), kutu):
+                sag -= 1
+            else:
+                break
             degisti = True
 
-        while sol < sag and _sutun_orani(toplam, sol, s_ust, s_alt) < esik:
-            sol += 1
-            degisti = True
-            s_ust, s_alt = ust, alt
-
-        while sol < sag and _sutun_orani(toplam, sag, s_ust, s_alt) < esik:
-            sag -= 1
-            degisti = True
-            s_ust, s_alt = ust, alt
+        if not degisti:
+            break
 
     return panorama[ust : alt + 1, sol : sag + 1]
 
@@ -165,56 +378,17 @@ def _cevirerek_yerlestir(goruntu, tx, ty, tuval_genislik, tuval_yukseklik):
     return tuval
 
 
-def _tuy_birlestir(warp_sol, warp_sag):
-    """
-    Feather-blend two warped BGR images in a narrow horizontal overlap band.
-    Blending only a subset of the overlap reduces blur on clock-like scenes.
-    """
-    m1 = _gecerli_maske(warp_sol)
-    m2 = _gecerli_maske(warp_sag)
-
-    sol_f = warp_sol.astype(np.float32)
-    sag_f = warp_sag.astype(np.float32)
-    sonuc = np.zeros_like(sol_f)
-
-    sadece_sol = (m1 > 0) & (m2 == 0)
-    sadece_sag = (m2 > 0) & (m1 == 0)
-    overlap = (m1 > 0) & (m2 > 0)
-
-    sonuc[sadece_sol] = sol_f[sadece_sol]
-    sonuc[sadece_sag] = sag_f[sadece_sag]
-
-    if np.any(overlap):
-        overlap_sutunlari = np.where(np.any(overlap, axis=0))[0]
-        sol_sinir = int(overlap_sutunlari[0])
-        sag_sinir = int(overlap_sutunlari[-1])
-        orta = 0.5 * (sol_sinir + sag_sinir)
-
-        overlap_genisligi = max(1, sag_sinir - sol_sinir + 1)
-        yari_bant = max(20, min(120, overlap_genisligi // 6))
-
-        x_koordinatlari = np.arange(warp_sol.shape[1], dtype=np.float32)
-        w_sol_1d = np.clip((orta + yari_bant - x_koordinatlari) / (2 * yari_bant), 0.0, 1.0)
-        w_sag_1d = 1.0 - w_sol_1d
-
-        w_sol = np.broadcast_to(w_sol_1d, overlap.shape)[..., None]
-        w_sag = np.broadcast_to(w_sag_1d, overlap.shape)[..., None]
-        overlap3 = overlap[..., None]
-        blended = sol_f * w_sol + sag_f * w_sag
-        sonuc = np.where(overlap3, blended, sonuc)
-
-    return np.clip(sonuc, 0, 255).astype(np.uint8)
-
-
-def panorama_birlestir(sol_bgr, sag_bgr, H):
+def panorama_birlestir(sol_bgr, sag_bgr, H, pozlama_dengele=True):
     """
     Stage 5 — panorama stitch:
     1. Warp the left image into the right image plane with H.
     2. Align both images on a shared canvas.
-    3. Feather-blend overlapping regions.
-    4. Auto-crop resulting black borders.
+    3. Match the exposure of the two shots on their overlap.
+    4. Feather-blend the overlap.
+    5. Auto-crop resulting black borders.
 
-    H maps left-image coordinates into the right-image plane.
+    H maps left-image coordinates into the right-image plane. Pass
+    pozlama_dengele=False to keep the left image's own exposure.
     """
     _homografiyi_dogrula(H)
 
@@ -227,6 +401,7 @@ def panorama_birlestir(sol_bgr, sag_bgr, H):
     warp_sol = cv2.warpPerspective(
         sol_bgr, M_sol, (tuval_genislik, tuval_yukseklik), flags=cv2.INTER_CUBIC
     )
+    maske_sol = _warp_maskesi(h_sol, w_sol, M_sol, tuval_genislik, tuval_yukseklik)
 
     # The right image is only translated by T, and by construction that
     # translation is a whole number of pixels: interpolating it would resample
@@ -237,11 +412,17 @@ def panorama_birlestir(sol_bgr, sag_bgr, H):
         warp_sag = cv2.warpPerspective(
             sag_bgr, T, (tuval_genislik, tuval_yukseklik), flags=cv2.INTER_CUBIC
         )
+        maske_sag = _warp_maskesi(h_sag, w_sag, T, tuval_genislik, tuval_yukseklik)
     else:
         warp_sag = _cevirerek_yerlestir(
             sag_bgr, cevirme[0], cevirme[1], tuval_genislik, tuval_yukseklik
         )
+        maske_sag = _yerlestirme_maskesi(
+            h_sag, w_sag, cevirme[0], cevirme[1], tuval_genislik, tuval_yukseklik
+        )
 
-    panorama = _tuy_birlestir(warp_sol, warp_sag)
-    panorama = _gecerli_alani_kirp(panorama)
-    return panorama
+    if pozlama_dengele:
+        warp_sol = _pozlama_esitle(warp_sol, warp_sag, maske_sol, maske_sag)
+
+    panorama = _tuy_birlestir(warp_sol, warp_sag, maske_sol, maske_sag)
+    return _gecerli_alani_kirp(panorama, cv2.bitwise_or(maske_sol, maske_sag))

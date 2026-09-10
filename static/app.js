@@ -116,7 +116,12 @@ async function runStitching() {
       throw new Error(data.error || "İşlem tamamlanamadı.");
     }
     setResult(data);
-    setStatus(`Panorama hazır: ${data.metrics.panoramaWidth} x ${data.metrics.panoramaHeight}px`);
+    let message = `Panorama hazır: ${data.metrics.panoramaWidth} x ${data.metrics.panoramaHeight}px`;
+    if (data.metrics.inputScale && data.metrics.inputScale < 1) {
+      const percent = Math.round(data.metrics.inputScale * 100);
+      message += ` (girdiler %${percent} boyuta küçültüldü)`;
+    }
+    setStatus(message);
   } catch (error) {
     setStatus(error.message, true);
   } finally {

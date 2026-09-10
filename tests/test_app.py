@@ -114,3 +114,19 @@ def test_stitch_upload_non_image_rejected(live_server, multipart_body):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(request)
     assert exc_info.value.code == 422
+
+
+def test_stitch_downscales_large_inputs(live_server, multipart_body, monkeypatch):
+    # The clock pair is 1300 px wide; with a 600 px cap the server must
+    # scale both inputs down and report the factor it used.
+    monkeypatch.setattr(app, "MAX_INPUT_SIDE", 600)
+    body, content_type = multipart_body({"mode": "example", "example": "clock"}, {})
+    request = urllib.request.Request(
+        f"{live_server}/api/stitch", data=body, headers={"Content-Type": content_type}
+    )
+    with urllib.request.urlopen(request) as resp:
+        payload = json.loads(resp.read())
+
+    assert payload["ok"] is True
+    assert 0 < payload["metrics"]["inputScale"] < 1
+    assert payload["metrics"]["panoramaWidth"] < 1300
