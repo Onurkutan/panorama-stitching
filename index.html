@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,10 +9,19 @@
   <body>
     <main class="shell">
       <section class="hero">
-        <div>
-          <p class="eyebrow">Computer Vision</p>
+        <div class="hero-text">
+          <div class="hero-top">
+            <p class="eyebrow" data-i18n="hero.eyebrow">Computer Vision</p>
+            <div class="lang-toggle" role="group" data-i18n-aria-label="hero.langAriaLabel">
+              <button class="lang-btn" type="button" data-lang="en">EN</button>
+              <span class="lang-sep" aria-hidden="true">|</span>
+              <button class="lang-btn" type="button" data-lang="tr">TR</button>
+            </div>
+          </div>
           <h1>Panorama Stitching Studio</h1>
-          <p class="intro">SIFT, FLANN, RANSAC ve feather blending adımlarını tek ekranda çalıştıran görsel bir arayüz.</p>
+          <p class="intro" data-i18n="hero.intro">
+            A visual interface that runs SIFT, FLANN, RANSAC and feather blending on a single screen.
+          </p>
         </div>
         <div class="hero-preview" aria-hidden="true">
           <img src="images/Clock/panorama_birlestirme.jpg" alt="" />
@@ -23,78 +32,115 @@
         <aside class="controls">
           <div class="panel-header">
             <span class="dot"></span>
-            <h2>Girdi</h2>
+            <h2 data-i18n="controls.heading">Input</h2>
           </div>
 
-          <div class="mode-switch" role="tablist" aria-label="Girdi modu">
-            <button class="mode active" type="button" role="tab" aria-selected="true" data-mode="example">Örnekler</button>
-            <button class="mode" type="button" role="tab" aria-selected="false" data-mode="upload">Yükle</button>
+          <div class="mode-switch" role="tablist" data-i18n-aria-label="controls.modeAriaLabel">
+            <button class="mode active" type="button" role="tab" aria-selected="true" data-mode="upload" data-i18n="mode.upload">Your photos</button>
+            <button class="mode" type="button" role="tab" aria-selected="false" data-mode="example" data-i18n="mode.example">Demo pairs</button>
           </div>
 
-          <div id="examplePanel" class="control-section">
-            <label for="exampleSelect">Veri seti</label>
+          <div id="uploadPanel" class="control-section">
+            <div class="upload-grid">
+              <label id="leftZone" class="drop-zone" for="leftImage">
+                <input id="leftImage" name="leftImage" type="file" accept="image/*" />
+                <span class="drop-zone-title" data-i18n="upload.leftLabel">Left photo</span>
+                <div class="drop-zone-preview">
+                  <img id="leftPreview" class="drop-zone-thumb" alt="" hidden />
+                  <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 16V4m0 0 4 4m-4-4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <strong id="leftFileName">Choose a file</strong>
+              </label>
+
+              <button id="swapButton" class="swap-button" type="button" data-i18n-aria-label="upload.swapAriaLabel">
+                <span aria-hidden="true">⇄</span>
+              </button>
+
+              <label id="rightZone" class="drop-zone" for="rightImage">
+                <input id="rightImage" name="rightImage" type="file" accept="image/*" />
+                <span class="drop-zone-title" data-i18n="upload.rightLabel">Right photo</span>
+                <div class="drop-zone-preview">
+                  <img id="rightPreview" class="drop-zone-thumb" alt="" hidden />
+                  <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 16V4m0 0 4 4m-4-4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </div>
+                <strong id="rightFileName">Choose a file</strong>
+              </label>
+            </div>
+            <p class="hint" data-i18n="upload.hint">
+              Tip: the left photo should be the one on the left, with about 30-50% overlap between the two shots.
+            </p>
+          </div>
+
+          <div id="examplePanel" class="control-section hidden">
+            <label for="exampleSelect" data-i18n="example.datasetLabel">Dataset</label>
             <select id="exampleSelect"></select>
             <div class="source-grid">
               <figure>
-                <img id="exampleLeft" alt="Sol örnek görsel" />
-                <figcaption>Sol</figcaption>
+                <img id="exampleLeft" data-i18n-alt="example.leftAlt" alt="Left example photo" />
+                <figcaption data-i18n="example.leftCaption">Left</figcaption>
               </figure>
               <figure>
-                <img id="exampleRight" alt="Sağ örnek görsel" />
-                <figcaption>Sağ</figcaption>
+                <img id="exampleRight" data-i18n-alt="example.rightAlt" alt="Right example photo" />
+                <figcaption data-i18n="example.rightCaption">Right</figcaption>
               </figure>
             </div>
           </div>
 
-          <div id="uploadPanel" class="control-section hidden">
-            <label class="drop-zone" for="leftImage">
-              <input id="leftImage" name="leftImage" type="file" accept="image/*" />
-              <span>Sol görsel</span>
-              <strong id="leftFileName">Dosya seç</strong>
-            </label>
-            <label class="drop-zone" for="rightImage">
-              <input id="rightImage" name="rightImage" type="file" accept="image/*" />
-              <span>Sağ görsel</span>
-              <strong id="rightFileName">Dosya seç</strong>
-            </label>
-          </div>
-
           <button id="runButton" class="run-button" type="button">
-            <span class="run-icon">▶</span>
-            Panoramayı Oluştur
+            <span class="run-icon" aria-hidden="true">▶</span>
+            <span id="runButtonLabel">Create panorama</span>
           </button>
 
-          <div id="status" class="status">Hazır</div>
+          <div id="status" class="status" aria-live="polite">Ready</div>
+          <progress id="progressBar" class="progress-bar" hidden></progress>
         </aside>
 
         <section class="results">
           <div class="result-top">
             <div>
-              <p class="eyebrow">Sonuç</p>
-              <h2>Birleştirilmiş panorama</h2>
+              <p class="eyebrow" data-i18n="results.eyebrow">Result</p>
+              <h2 data-i18n="results.heading">Stitched panorama</h2>
             </div>
-            <a id="downloadButton" class="download disabled" href="#" download>İndir</a>
+            <a id="downloadButton" class="download disabled" href="#" download="panorama.jpg" data-i18n="results.download">Download panorama</a>
           </div>
 
           <div class="panorama-frame">
-            <img id="panoramaImage" src="images/Clock/panorama_birlestirme.jpg" alt="Panorama sonucu" />
+            <div id="panoramaEmpty" class="empty-state">
+              <svg class="empty-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+                <rect x="4" y="8" width="40" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2" />
+                <circle cx="16" cy="18" r="4" fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M6 34l10-10 8 8 6-6 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              <p data-i18n="results.empty">Your panorama will appear here</p>
+            </div>
+            <img id="panoramaImage" data-i18n-alt="results.panoramaAlt" alt="Stitched panorama result" hidden />
           </div>
 
-          <div class="metrics" aria-live="polite">
-            <div><span id="mLeft">-</span><small>Sol nokta</small></div>
-            <div><span id="mRight">-</span><small>Sağ nokta</small></div>
-            <div><span id="mMatches">-</span><small>Eşleşme</small></div>
-            <div><span id="mInliers">-</span><small>RANSAC</small></div>
-          </div>
+          <div class="details">
+            <h3 class="details-heading" data-i18n="results.detailsHeading">Pipeline details</h3>
 
-          <div class="tabs" role="tablist" aria-label="Ara görseller">
-            <button class="tab active" type="button" role="tab" aria-selected="true" data-target="matches">Eşleşmeler</button>
-            <button class="tab" type="button" role="tab" aria-selected="false" data-target="ransac">RANSAC</button>
-            <button class="tab" type="button" role="tab" aria-selected="false" data-target="leftKeypoints">Sol SIFT</button>
-            <button class="tab" type="button" role="tab" aria-selected="false" data-target="rightKeypoints">Sağ SIFT</button>
-          </div>
-          <div class="detail-frame">
-            <img id="detailImage" alt="Ara işlem görseli" hidden />
+            <div class="metrics" aria-live="polite">
+              <div><span id="mLeft">-</span><small data-i18n="metrics.left">Left keypoints</small></div>
+              <div><span id="mRight">-</span><small data-i18n="metrics.right">Right keypoints</small></div>
+              <div><span id="mMatches">-</span><small data-i18n="metrics.matches">Good matches</small></div>
+              <div><span id="mInliers">-</span><small data-i18n="metrics.inliers">RANSAC inliers</small></div>
+            </div>
+
+            <div class="tabs" role="tablist" data-i18n-aria-label="results.tabsAriaLabel">
+              <button class="tab active" type="button" role="tab" aria-selected="true" data-target="matches" data-i18n="tabs.matches">Matches</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-target="ransac" data-i18n="tabs.ransac">RANSAC inliers</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-target="leftKeypoints" data-i18n="tabs.leftKeypoints">Left keypoints</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" data-target="rightKeypoints" data-i18n="tabs.rightKeypoints">Right keypoints</button>
+            </div>
+            <div class="detail-frame">
+              <img id="detailImage" data-i18n-alt="results.detailAlt" alt="Intermediate pipeline image" hidden />
+            </div>
           </div>
         </section>
       </section>

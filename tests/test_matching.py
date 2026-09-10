@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import pytest
 
-from errors import PanoramaError
-from matcher import match_features
+from panorama_stitching.errors import PanoramaError
+from panorama_stitching.matching import match_features
 
 
 def test_match_features_raises_on_missing_descriptors():

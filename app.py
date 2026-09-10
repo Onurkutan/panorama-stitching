@@ -12,7 +12,8 @@ from urllib.parse import unquote, urlparse
 
 import cv2
 
-from panorama_pipeline import EXAMPLES, PROJECT_DIR, PanoramaError, example_paths, stitch_pair
+from panorama_stitching.errors import PanoramaError
+from panorama_stitching.pipeline import EXAMPLES, PROJECT_DIR, example_paths, stitch_pair
 
 STATIC_DIR = PROJECT_DIR / "static"
 OUTPUT_DIR = PROJECT_DIR / "web_outputs"
@@ -152,7 +153,11 @@ class PanoramaHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             return _json_response(
                 self,
-                {"ok": False, "error": "Icerik uzunlugu eksik ya da gecersiz."},
+                {
+                    "ok": False,
+                    "error": "The content length header is missing or invalid.",
+                    "code": "form_invalid",
+                },
                 status=400,
             )
 
@@ -160,7 +165,11 @@ class PanoramaHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             return _json_response(
                 self,
-                {"ok": False, "error": "Yuklenen veri cok buyuk (maksimum 25 MB)."},
+                {
+                    "ok": False,
+                    "error": "The uploaded data is too large (25 MB maximum).",
+                    "code": "upload_too_large",
+                },
                 status=413,
             )
 
@@ -180,8 +189,8 @@ class PanoramaHandler(BaseHTTPRequestHandler):
             else:
                 upload_dir = UPLOAD_DIR / job_id
                 upload_dir.mkdir(parents=True, exist_ok=True)
-                left_path = self._save_upload(files, "leftImage", upload_dir / "sol.jpg")
-                right_path = self._save_upload(files, "rightImage", upload_dir / "sag.jpg")
+                left_path = self._save_upload(files, "leftImage", upload_dir / "left.jpg")
+                right_path = self._save_upload(files, "rightImage", upload_dir / "right.jpg")
                 source = {
                     "left": f"/media/{left_path.relative_to(PROJECT_DIR).as_posix()}",
                     "right": f"/media/{right_path.relative_to(PROJECT_DIR).as_posix()}",
@@ -203,12 +212,20 @@ class PanoramaHandler(BaseHTTPRequestHandler):
                 },
             )
         except PanoramaError as exc:
-            return _json_response(self, {"ok": False, "error": str(exc)}, status=422)
-        except Exception:
-            logging.exception("[web] /api/stitch isleminde beklenmeyen hata")
             return _json_response(
                 self,
-                {"ok": False, "error": "Beklenmeyen bir hata olustu."},
+                {"ok": False, "error": str(exc), "code": exc.code},
+                status=422,
+            )
+        except Exception:
+            logging.exception("[web] unexpected error while handling /api/stitch")
+            return _json_response(
+                self,
+                {
+                    "ok": False,
+                    "error": "An unexpected error occurred.",
+                    "code": "unexpected",
+                },
                 status=500,
             )
 
@@ -255,7 +272,7 @@ class PanoramaHandler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         match = re.search(r"boundary=([^;]+)", content_type)
         if not match:
-            raise PanoramaError("Form verisi okunamadi.")
+            raise PanoramaError("The form data could not be read.", code="form_invalid")
 
         boundary = match.group(1).strip('"').encode("utf-8")
         body = self.rfile.read(content_length)
@@ -295,7 +312,9 @@ class PanoramaHandler(BaseHTTPRequestHandler):
     def _save_upload(self, files, field_name, destination):
         upload = files.get(field_name)
         if not upload or not upload["content"]:
-            raise PanoramaError("Lutfen sol ve sag gorseli yukleyin.")
+            raise PanoramaError(
+                "Please upload both the left and the right image.", code="upload_missing"
+            )
 
         suffix = Path(upload["filename"]).suffix.lower()
         if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
@@ -309,7 +328,9 @@ class PanoramaHandler(BaseHTTPRequestHandler):
                 destination.unlink()
             except OSError:
                 pass
-            raise PanoramaError("Yuklenen dosya bir gorsel olarak okunamadi.")
+            raise PanoramaError(
+                "The uploaded file could not be read as an image.", code="upload_not_image"
+            )
 
         return destination
 
@@ -337,7 +358,7 @@ def main():
     _sweep_job_dirs()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     server = QuietThreadingHTTPServer(("127.0.0.1", port), PanoramaHandler)
-    print(f"Panorama arayuzu hazir: http://127.0.0.1:{port}")
+    print(f"Panorama web UI ready: http://127.0.0.1:{port}")
     server.serve_forever()
 
 

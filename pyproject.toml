@@ -1,5 +1,35 @@
-# Tool configuration only: the project is a set of flat modules, dependencies
-# live in requirements.txt (runtime) and requirements-dev.txt (tests/lint).
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "panorama-stitching"
+version = "1.0.0"
+description = "Stitch two overlapping photos into a panorama with SIFT, FLANN, RANSAC and feather blending"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Onur Kutan" }]
+dependencies = [
+    "opencv-python>=4.8",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+panorama-stitch = "panorama_stitching.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Onurkutan/panorama-stitching"
+Issues = "https://github.com/Onurkutan/panorama-stitching/issues"
+
+[tool.setuptools.packages.find]
+include = ["panorama_stitching*"]
 
 [tool.ruff]
 line-length = 100
@@ -11,6 +41,8 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The web app (app.py) and the package are imported straight from the checkout,
+# so the test run needs no installation step.
 pythonpath = ["."]
 addopts = "-q"
 markers = ["slow: end-to-end runs on the bundled example images"]

@@ -78,9 +78,30 @@ def test_stitch_content_length_too_large(live_server):
         conn.endheaders()
         resp = conn.getresponse()
         assert resp.status == 413
-        resp.read()
+        payload = json.loads(resp.read())
     finally:
         conn.close()
+
+    assert payload["ok"] is False
+    assert payload["code"] == "upload_too_large"
+
+
+def test_stitch_without_content_length(live_server):
+    """No Content-Length at all: a request-level 400 that still carries a code."""
+    parts = urlsplit(live_server)
+    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=10)
+    try:
+        conn.putrequest("POST", "/api/stitch", skip_accept_encoding=True)
+        conn.putheader("Content-Type", "multipart/form-data; boundary=x")
+        conn.endheaders()
+        resp = conn.getresponse()
+        assert resp.status == 400
+        payload = json.loads(resp.read())
+    finally:
+        conn.close()
+
+    assert payload["ok"] is False
+    assert payload["code"] == "form_invalid"
 
 
 def test_stitch_example_mode(live_server, multipart_body):
@@ -114,6 +135,9 @@ def test_stitch_upload_non_image_rejected(live_server, multipart_body):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(request)
     assert exc_info.value.code == 422
+    payload = json.loads(exc_info.value.read())
+    assert payload["ok"] is False
+    assert payload["code"] == "upload_not_image"
 
 
 def test_stitch_downscales_large_inputs(live_server, multipart_body, monkeypatch):
@@ -142,9 +166,9 @@ def test_static_examples_match_pipeline():
     # static/app.js carries a copy of EXAMPLES for the server-less (Pyodide) mode.
     import re
 
-    import panorama_pipeline
+    from panorama_stitching import pipeline
 
-    source = (panorama_pipeline.PROJECT_DIR / "static" / "app.js").read_text(encoding="utf-8")
+    source = (pipeline.PROJECT_DIR / "static" / "app.js").read_text(encoding="utf-8")
     pattern = re.compile(
         r'id: "(?P<id>\w+)", title: "(?P<title>[^"]+)", folder: "(?P<folder>[^"]+)", '
         r'left: "(?P<left>[^"]+)", right: "(?P<right>[^"]+)"'
@@ -152,6 +176,6 @@ def test_static_examples_match_pipeline():
     found = [m.groupdict() for m in pattern.finditer(source)]
     expected = [
         {k: example[k] for k in ("id", "title", "folder", "left", "right")}
-        for example in panorama_pipeline.EXAMPLES
+        for example in pipeline.EXAMPLES
     ]
     assert found == expected

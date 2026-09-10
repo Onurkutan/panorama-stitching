@@ -6,9 +6,9 @@ import cv2
 import numpy as np
 import pytest
 
-import panorama_pipeline
+from panorama_stitching import pipeline
 
-PROJECT_DIR = panorama_pipeline.PROJECT_DIR
+PROJECT_DIR = pipeline.PROJECT_DIR
 
 
 def _textured_image(width, height, seed=0):

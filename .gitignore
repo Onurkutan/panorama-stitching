@@ -34,13 +34,14 @@ env/
 /web_outputs/
 /web_uploads/
 
-# Project-specific: default output root of the CLI (python Step1_Sift.py)
+# Project-specific: default output root of the CLI
+# (python -m panorama_stitching.cli)
 /outputs/
 
 # Project-specific: intermediate visualizations written by the CLI
 # (panoramas themselves are tracked as showcase images)
-images/**/sol_noktalar.jpg
-images/**/sag_noktalar.jpg
-images/**/eslesme_final.jpg
-images/**/ransac_temizlenmis_eslesmeler.jpg
-/ransac_temizlenmis_eslesmeler.jpg
+images/**/left_keypoints.jpg
+images/**/right_keypoints.jpg
+images/**/matches.jpg
+images/**/ransac_inliers.jpg
+/ransac_inliers.jpg

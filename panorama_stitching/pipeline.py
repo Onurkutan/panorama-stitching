@@ -1,17 +1,19 @@
+"""End-to-end pipeline: two overlapping photos in, one panorama out.
+
+This is a library module: it never configures logging, the entry points
+(panorama_stitching.cli, app.py) decide how log records are handled.
+"""
+
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-import birlestirme
-import homografi
-import matcher
-from errors import PanoramaError
-from homografi import MIN_MATCH_COUNT
+from . import blending, homography, matching
+from .errors import PanoramaError
+from .features import detect_features
+from .homography import MIN_MATCH_COUNT
 
-# This is a library module: it never configures logging, the entry points
-# (Step1_Sift.py, app.py) decide how log records are handled.
-# PanoramaError is re-exported so callers keep importing it from here.
 __all__ = [
     "EXAMPLES",
     "PROJECT_DIR",
@@ -22,26 +24,27 @@ __all__ = [
 ]
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+# The repository root: this file lives in <root>/panorama_stitching/.
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 EXAMPLES = [
     {
         "id": "clock",
-        "title": "Saat Kulesi",
+        "title": "Clock tower",
         "folder": "images/Clock",
         "left": "sol1.jpg",
         "right": "sag1.jpg",
     },
     {
         "id": "school",
-        "title": "Okul Bahcesi",
+        "title": "School yard",
         "folder": "images/SchoolImage",
         "left": "sol2.jpg",
         "right": "sag2.jpg",
     },
     {
         "id": "street",
-        "title": "Test Goruntusu",
+        "title": "Pont du Gard",
         "folder": "images/test1",
         "left": "s1.jpg",
         "right": "s2.jpg",
@@ -50,13 +53,15 @@ EXAMPLES = [
 
 
 def get_example(example_id):
+    """Return the EXAMPLES entry with this id, or raise PanoramaError."""
     for example in EXAMPLES:
         if example["id"] == example_id:
             return example
-    raise PanoramaError("Secilen ornek veri bulunamadi.")
+    raise PanoramaError("The selected example set was not found.", code="example_not_found")
 
 
 def example_paths(example_id):
+    """Absolute (left, right) image paths of one bundled example set."""
     example = get_example(example_id)
     folder = PROJECT_DIR / example["folder"]
     return folder / example["left"], folder / example["right"]
@@ -65,50 +70,37 @@ def example_paths(example_id):
 def _read_image(path):
     image = cv2.imread(str(path))
     if image is None:
-        raise PanoramaError(f"Goruntu okunamadi: {path.name}")
+        # Path() so a plain string path also produces a message, not a crash.
+        name = Path(path).name
+        raise PanoramaError(f"Could not read the image: {name}", code="image_unreadable")
     return image
 
 
-def _detect_features(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    sift = cv2.SIFT_create()
-    keypoints, descriptors = sift.detectAndCompute(gray, None)
-    if descriptors is None or len(keypoints) == 0:
-        raise PanoramaError("Bu gorselde yeterli SIFT noktasi bulunamadi.")
-    drawn = cv2.drawKeypoints(
-        gray,
-        keypoints,
-        image.copy(),
-        flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS,
-    )
-    return keypoints, descriptors, drawn
-
-
-def _kucult(image, olcek):
+def _downscale(image, scale):
     """Downscale with INTER_AREA, the right filter for shrinking."""
-    yeni_genislik = max(1, int(round(image.shape[1] * olcek)))
-    yeni_yukseklik = max(1, int(round(image.shape[0] * olcek)))
-    return cv2.resize(image, (yeni_genislik, yeni_yukseklik), interpolation=cv2.INTER_AREA)
+    new_width = max(1, int(round(image.shape[1] * scale)))
+    new_height = max(1, int(round(image.shape[0] * scale)))
+    return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
 
-def _girisleri_olcekle(left, right, max_side):
+def _scale_inputs(left, right, max_side):
     """Shrink both inputs by one common factor when either side is too large.
 
     Returns (left, right, scale); scale is 1.0 when nothing was resized.
     """
     if not max_side:
         return left, right, 1.0
-    en_buyuk = max(left.shape[0], left.shape[1], right.shape[0], right.shape[1])
-    if en_buyuk <= max_side:
+    longest_side = max(left.shape[0], left.shape[1], right.shape[0], right.shape[1])
+    if longest_side <= max_side:
         return left, right, 1.0
-    olcek = float(max_side) / float(en_buyuk)
-    return _kucult(left, olcek), _kucult(right, olcek), olcek
+    scale = float(max_side) / float(longest_side)
+    return _downscale(left, scale), _downscale(right, scale), scale
 
 
 def _write_image(path, image):
     ok = cv2.imwrite(str(path), image)
     if not ok:
-        raise PanoramaError(f"Cikti kaydedilemedi: {path.name}")
+        raise PanoramaError(f"Could not save the output: {path.name}", code="output_write_failed")
 
 
 def stitch_pair(left_path, right_path, output_dir, max_side=None):
@@ -123,20 +115,21 @@ def stitch_pair(left_path, right_path, output_dir, max_side=None):
 
     left = _read_image(left_path)
     right = _read_image(right_path)
-    left, right, input_scale = _girisleri_olcekle(left, right, max_side)
+    left, right, input_scale = _scale_inputs(left, right, max_side)
 
-    kp_left, des_left, left_keypoints = _detect_features(left)
-    kp_right, des_right, right_keypoints = _detect_features(right)
+    kp_left, des_left, left_keypoints = detect_features(left)
+    kp_right, des_right, right_keypoints = detect_features(right)
 
-    left_keypoints_path = output_dir / "sol_noktalar.jpg"
-    right_keypoints_path = output_dir / "sag_noktalar.jpg"
+    left_keypoints_path = output_dir / "left_keypoints.jpg"
+    right_keypoints_path = output_dir / "right_keypoints.jpg"
     _write_image(left_keypoints_path, left_keypoints)
     _write_image(right_keypoints_path, right_keypoints)
 
-    good_matches = matcher.match_features(kp_left, des_left, kp_right, des_right)
+    good_matches = matching.match_features(kp_left, des_left, kp_right, des_right)
     if len(good_matches) < MIN_MATCH_COUNT:
         raise PanoramaError(
-            f"Yeterli eslesme bulunamadi. Gerekli: {MIN_MATCH_COUNT}, bulunan: {len(good_matches)}"
+            f"Not enough matches. Required: {MIN_MATCH_COUNT}, found: {len(good_matches)}",
+            code="not_enough_matches",
         )
 
     match_preview = cv2.drawMatches(
@@ -148,26 +141,29 @@ def stitch_pair(left_path, right_path, output_dir, max_side=None):
         None,
         flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
     )
-    match_path = output_dir / "eslesme_final.jpg"
+    match_path = output_dir / "matches.jpg"
     _write_image(match_path, match_preview)
 
-    ransac_path = output_dir / "ransac_temizlenmis_eslesmeler.jpg"
-    H, mask = homografi.donusum_matrisi_hesapla(
+    ransac_path = output_dir / "ransac_inliers.jpg"
+    H, mask = homography.estimate_homography(
         kp_left,
         kp_right,
         good_matches,
         left,
         right,
-        ransac_cikti_yolu=str(ransac_path),
+        inlier_output_path=str(ransac_path),
     )
     if H is None or mask is None:
-        raise PanoramaError("Homografi hesaplanamadi; gorseller yeterince ortusmuyor olabilir.")
+        raise PanoramaError(
+            "Could not compute the homography; the images may not overlap enough.",
+            code="homography_failed",
+        )
 
-    panorama = birlestirme.panorama_birlestir(left, right, H)
+    panorama = blending.stitch_images(left, right, H)
     if panorama is None:
-        raise PanoramaError("Panorama uretilemedi.")
+        raise PanoramaError("The panorama could not be produced.", code="unexpected")
 
-    panorama_path = output_dir / "panorama_birlestirme.jpg"
+    panorama_path = output_dir / "panorama.jpg"
     _write_image(panorama_path, panorama)
 
     inliers = int(np.sum(mask))

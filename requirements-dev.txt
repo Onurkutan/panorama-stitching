@@ -1,3 +1,4 @@
+# Test and lint tools (mirrors [project.optional-dependencies].dev in pyproject.toml)
 -r requirements.txt
 pytest>=8
 ruff>=0.5

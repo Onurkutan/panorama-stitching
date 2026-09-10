@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import pytest
 
-from errors import PanoramaError
-from homografi import MIN_MATCH_COUNT, donusum_matrisi_hesapla
+from panorama_stitching.errors import PanoramaError
+from panorama_stitching.homography import MIN_MATCH_COUNT, estimate_homography
 
 
 def _fake_matches(n):
@@ -37,7 +37,7 @@ def test_too_few_matches_raises():
     kp = [cv2.KeyPoint(float(i), float(i), 1) for i in range(n)]
     dummy_img = np.zeros((10, 10, 3), dtype=np.uint8)
     with pytest.raises(PanoramaError):
-        donusum_matrisi_hesapla(kp, kp, _fake_matches(n), dummy_img, dummy_img)
+        estimate_homography(kp, kp, _fake_matches(n), dummy_img, dummy_img)
 
 
 def test_recovers_known_homography():
@@ -47,7 +47,7 @@ def test_recovers_known_homography():
     matches = _fake_matches(len(left_pts))
     dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
 
-    H_est, mask = donusum_matrisi_hesapla(kp1, kp2, matches, dummy_img, dummy_img)
+    H_est, mask = estimate_homography(kp1, kp2, matches, dummy_img, dummy_img)
 
     assert int(mask.sum()) == len(matches)
     H_true_n = H_true / H_true[2, 2]
@@ -63,7 +63,7 @@ def test_no_file_written_without_output_path(tmp_path, monkeypatch):
     matches = _fake_matches(len(left_pts))
     dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
 
-    donusum_matrisi_hesapla(kp1, kp2, matches, dummy_img, dummy_img, ransac_cikti_yolu=None)
+    estimate_homography(kp1, kp2, matches, dummy_img, dummy_img, inlier_output_path=None)
 
     assert list(tmp_path.iterdir()) == []
 
@@ -76,8 +76,6 @@ def test_writes_file_when_output_path_given(tmp_path):
     dummy_img = np.zeros((200, 200, 3), dtype=np.uint8)
     out_path = tmp_path / "ransac.jpg"
 
-    donusum_matrisi_hesapla(
-        kp1, kp2, matches, dummy_img, dummy_img, ransac_cikti_yolu=str(out_path)
-    )
+    estimate_homography(kp1, kp2, matches, dummy_img, dummy_img, inlier_output_path=str(out_path))
 
     assert out_path.exists()

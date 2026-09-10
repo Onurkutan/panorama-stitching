@@ -2,9 +2,9 @@ import cv2
 import numpy as np
 import pytest
 
-from errors import PanoramaError
-from homografi import MIN_MATCH_COUNT
-from panorama_pipeline import stitch_pair
+from panorama_stitching.errors import PanoramaError
+from panorama_stitching.homography import MIN_MATCH_COUNT
+from panorama_stitching.pipeline import stitch_pair
 
 
 @pytest.mark.slow
@@ -54,3 +54,27 @@ def test_stitch_pair_flat_images_raise(tmp_path):
 def test_stitch_pair_missing_file_raises(tmp_path):
     with pytest.raises(PanoramaError):
         stitch_pair(tmp_path / "missing_left.jpg", tmp_path / "missing_right.jpg", tmp_path / "out")
+
+
+@pytest.mark.slow
+def test_stitch_pair_output_names(tmp_path, clock_pair_paths):
+    """The result keys are the API contract; the file names are what the UI links to."""
+    left_path, right_path = clock_pair_paths
+    result = stitch_pair(left_path, right_path, tmp_path, max_side=600)
+
+    assert result["files"] == {
+        "panorama": "panorama.jpg",
+        "leftKeypoints": "left_keypoints.jpg",
+        "rightKeypoints": "right_keypoints.jpg",
+        "matches": "matches.jpg",
+        "ransac": "ransac_inliers.jpg",
+    }
+    assert set(result["metrics"]) == {
+        "leftKeypoints",
+        "rightKeypoints",
+        "goodMatches",
+        "inliers",
+        "panoramaWidth",
+        "panoramaHeight",
+        "inputScale",
+    }
