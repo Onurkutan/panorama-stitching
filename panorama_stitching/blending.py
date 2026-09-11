@@ -63,20 +63,18 @@ def _validate_homography(H):
     return H
 
 
-def _compute_canvas(H, left_height, left_width, right_height, right_width, pad=2):
-    """Compute canvas size and translation from warped left and fixed right image."""
-    _validate_homography(H)
+def _corners(height, width):
+    """The four corners of an image, clockwise from the origin."""
+    return np.float32([[0, 0], [width, 0], [width, height], [0, height]])
 
-    left_corners = np.float32(
-        [[0, 0], [left_width, 0], [left_width, left_height], [0, left_height]]
-    ).reshape(-1, 1, 2)
-    left_warped = cv2.perspectiveTransform(left_corners, H).reshape(-1, 2)
 
-    right_corners = np.float32(
-        [[0, 0], [right_width, 0], [right_width, right_height], [0, right_height]]
-    )
-    all_points = np.vstack([left_warped, right_corners])
+def _canvas_from_points(all_points, input_pixels, pad):
+    """Canvas size and translation holding every given point plus a border.
 
+    `all_points` is the (N, 2) stack of the warped corners of every image that
+    goes onto the canvas and `input_pixels` their total pixel count, which is
+    what the area guard below is measured against.
+    """
     # Points behind the camera plane come back as inf/nan; never feed those
     # into the int() conversions below.
     if not np.all(np.isfinite(all_points)):
@@ -90,7 +88,6 @@ def _compute_canvas(H, left_height, left_width, right_height, right_width, pad=2
 
     # Check the size in float first: a degenerate H can ask for a canvas of
     # billions of pixels, and even computing it as int is pointless then.
-    input_pixels = left_height * left_width + right_height * right_width
     requested_area = float(xmax - xmin + 2 * pad) * float(ymax - ymin + 2 * pad)
     if requested_area > MAX_CANVAS_FACTOR * input_pixels:
         raise PanoramaError(
@@ -105,6 +102,42 @@ def _compute_canvas(H, left_height, left_width, right_height, right_width, pad=2
 
     T = np.float32([[1, 0, tx], [0, 1, ty], [0, 0, 1]])
     return canvas_width, canvas_height, T
+
+
+def _compute_canvas(H, left_height, left_width, right_height, right_width, pad=2):
+    """Compute canvas size and translation from warped left and fixed right image."""
+    _validate_homography(H)
+
+    left_corners = _corners(left_height, left_width).reshape(-1, 1, 2)
+    left_warped = cv2.perspectiveTransform(left_corners, H).reshape(-1, 2)
+    all_points = np.vstack([left_warped, _corners(right_height, right_width)])
+
+    input_pixels = left_height * left_width + right_height * right_width
+    return _canvas_from_points(all_points, input_pixels, pad)
+
+
+def _compute_canvas_set(images, homographies, pad=2):
+    """One canvas holding every image of a set warped into the reference plane.
+
+    homographies[k] maps image k into the reference plane, so the reference
+    itself carries the identity and its corners are taken as they are -- which
+    is also what keeps a two-image set bit-identical to _compute_canvas.
+    """
+    identity = np.eye(3)
+    points = []
+    input_pixels = 0
+    for image, H in zip(images, homographies, strict=True):
+        height, width = image.shape[:2]
+        input_pixels += height * width
+        corners = _corners(height, width)
+        matrix = _validate_homography(H)
+        if np.array_equal(matrix, identity):
+            points.append(corners)
+        else:
+            points.append(
+                cv2.perspectiveTransform(corners.reshape(-1, 1, 2), matrix).reshape(-1, 2)
+            )
+    return _canvas_from_points(np.vstack(points), input_pixels, pad)
 
 
 def _valid_mask(image):
@@ -135,26 +168,45 @@ def _erode_mask(mask, radius=MASK_EROSION):
     return eroded
 
 
-def _warp_mask(height, width, M, canvas_width, canvas_height):
+def _source_mask(height, width, mask):
+    """The image's own validity mask, or the full rectangle when it has none."""
+    if mask is None:
+        return np.full((height, width), 255, dtype=np.uint8)
+    return mask
+
+
+def _warp_mask(height, width, M, canvas_width, canvas_height, mask=None):
     """Validity mask of an image warped by M, as an eroded 0/255 canvas mask.
 
     The mask is warped with INTER_NEAREST so it stays binary, then eroded: the
     image itself is resampled with a smoothing kernel that pulls the black
     background into the border pixels, and those must not count as content.
+
+    `mask` is the image's own 0/255 validity mask when it has one -- a
+    cylindrically projected photo does not fill its rectangle -- and defaults to
+    the whole rectangle.
     """
-    filled = np.full((height, width), 255, dtype=np.uint8)
-    mask = cv2.warpPerspective(filled, M, (canvas_width, canvas_height), flags=cv2.INTER_NEAREST)
+    mask = cv2.warpPerspective(
+        _source_mask(height, width, mask),
+        M,
+        (canvas_width, canvas_height),
+        flags=cv2.INTER_NEAREST,
+    )
     return _erode_mask(mask)
 
 
-def _placement_mask(height, width, tx, ty, canvas_width, canvas_height):
+def _placement_mask(height, width, tx, ty, canvas_width, canvas_height, mask=None):
     """Validity mask of an image copied into the canvas at an integer offset.
 
-    A slice copy resamples nothing, so this rectangle is exact and needs no
-    erosion -- unlike the warped mask above.
+    A slice copy resamples nothing, so the full rectangle is exact and needs no
+    erosion -- unlike the warped mask above. A mask handed in, on the other
+    hand, is the result of a resampling warp of its own and carries the same
+    interpolation fringe along its border, so that one is eroded.
     """
-    filled = np.full((height, width), 255, dtype=np.uint8)
-    return _place_translated(filled, tx, ty, canvas_width, canvas_height)
+    placed = _place_translated(
+        _source_mask(height, width, mask), tx, ty, canvas_width, canvas_height
+    )
+    return placed if mask is None else _erode_mask(placed)
 
 
 def _bounding_box(mask):
@@ -411,42 +463,87 @@ def stitch_images(left_bgr, right_bgr, H, match_exposure=True):
 
     H maps left-image coordinates into the right-image plane. Pass
     match_exposure=False to keep the left image's own exposure.
+
+    This is the two-image case of stitch_set_images: the right image is the
+    reference (identity homography, placed by a slice copy) and the left one
+    is the single image composited onto it. Both paths therefore produce the
+    very same panorama, byte for byte.
     """
-    _validate_homography(H)
-
-    left_height, left_width = left_bgr.shape[:2]
-    right_height, right_width = right_bgr.shape[:2]
-
-    canvas_width, canvas_height, T = _compute_canvas(
-        H, left_height, left_width, right_height, right_width
+    return stitch_set_images(
+        [left_bgr, right_bgr],
+        [H, np.eye(3)],
+        reference_index=1,
+        order=[0],
+        match_exposure=match_exposure,
     )
-    M_left = T @ H
 
-    warped_left = cv2.warpPerspective(
-        left_bgr, M_left, (canvas_width, canvas_height), flags=cv2.INTER_CUBIC
-    )
-    mask_left = _warp_mask(left_height, left_width, M_left, canvas_width, canvas_height)
 
-    # The right image is only translated by T, and by construction that
-    # translation is a whole number of pixels: interpolating it would resample
-    # every pixel onto itself. A slice copy gives the identical result for a
-    # fraction of the cost. Fall back to warping if T is ever not integral.
+def stitch_set_images(
+    images, homographies, reference_index, order, match_exposure=True, masks=None
+):
+    """
+    Stage 5 for a whole set -- warp every photo into the reference plane and
+    composite them onto one canvas, outward from the reference.
+
+    homographies[k] maps image k into the reference plane; the reference's own
+    entry is the identity. `order` is the sequence in which the other images
+    join the composite -- breadth-first from the reference, so each of them is
+    blended against a composite it actually overlaps. The reference index may
+    appear in `order`; it is skipped there.
+
+    The reference is placed with an integer slice copy, so its validity mask is
+    an exact rectangle; every other image is warped with INTER_CUBIC and gets
+    an eroded mask that leaves out the interpolation fringe. The growing
+    composite is the fixed side of every step: each new image is scaled towards
+    the composite's exposure and feathered into it, and earlier images are
+    never resampled or re-graded again. The union of all validity masks drives
+    the final auto-crop.
+
+    `masks` is an optional per-image 0/255 validity mask, for images that do not
+    fill their own rectangle -- what the cylindrical projection produces. Each
+    image's own mask is then warped (or placed) instead of the full rectangle,
+    so the black corners of a cylinder image never count as content. Without it
+    every image is taken to be fully valid, which is the two-image case and the
+    planar set.
+    """
+    canvas_width, canvas_height, T = _compute_canvas_set(images, homographies)
+
+    reference = images[reference_index]
+    reference_height, reference_width = reference.shape[:2]
+    reference_mask = None if masks is None else masks[reference_index]
+
+    # T is a whole-pixel translation by construction, so the reference can be
+    # copied in rather than resampled onto itself. Fall back to a warp if it
+    # is ever not integral.
     translation = _integer_translation(T)
     if translation is None:
-        warped_right = cv2.warpPerspective(
-            right_bgr, T, (canvas_width, canvas_height), flags=cv2.INTER_CUBIC
+        composite = cv2.warpPerspective(
+            reference, T, (canvas_width, canvas_height), flags=cv2.INTER_CUBIC
         )
-        mask_right = _warp_mask(right_height, right_width, T, canvas_width, canvas_height)
+        composite_mask = _warp_mask(
+            reference_height, reference_width, T, canvas_width, canvas_height, reference_mask
+        )
     else:
-        warped_right = _place_translated(
-            right_bgr, translation[0], translation[1], canvas_width, canvas_height
-        )
-        mask_right = _placement_mask(
-            right_height, right_width, translation[0], translation[1], canvas_width, canvas_height
+        tx, ty = translation
+        composite = _place_translated(reference, tx, ty, canvas_width, canvas_height)
+        composite_mask = _placement_mask(
+            reference_height, reference_width, tx, ty, canvas_width, canvas_height, reference_mask
         )
 
-    if match_exposure:
-        warped_left = _equalize_exposure(warped_left, warped_right, mask_left, mask_right)
+    for index in order:
+        if index == reference_index:
+            continue
+        image = images[index]
+        height, width = image.shape[:2]
+        M = T @ homographies[index]
+        warped = cv2.warpPerspective(image, M, (canvas_width, canvas_height), flags=cv2.INTER_CUBIC)
+        mask = _warp_mask(
+            height, width, M, canvas_width, canvas_height, None if masks is None else masks[index]
+        )
 
-    panorama = _feather_blend(warped_left, warped_right, mask_left, mask_right)
-    return _crop_valid_area(panorama, cv2.bitwise_or(mask_left, mask_right))
+        if match_exposure:
+            warped = _equalize_exposure(warped, composite, mask, composite_mask)
+        composite = _feather_blend(warped, composite, mask, composite_mask)
+        composite_mask = cv2.bitwise_or(mask, composite_mask)
+
+    return _crop_valid_area(composite, composite_mask)

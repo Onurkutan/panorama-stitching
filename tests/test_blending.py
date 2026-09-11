@@ -160,6 +160,33 @@ def test_placement_mask_is_an_exact_rectangle():
     assert np.array_equal(mask[4:24, 5:35], np.full((20, 30), 255, dtype=np.uint8))
 
 
+def test_warp_mask_honours_the_image_own_mask():
+    """A cylinder image does not fill its rectangle, and says so in its mask."""
+    radius = blending.MASK_EROSION
+    source = np.full((40, 60), 255, dtype=np.uint8)
+    source[:, :20] = 0  # the part the projection left empty
+    M = np.float32([[1, 0, 5], [0, 1, 4], [0, 0, 1]])
+
+    mask = blending._warp_mask(40, 60, M, 80, 60, source)
+
+    expected = np.zeros((60, 80), dtype=np.uint8)
+    expected[4 + radius : 44 - radius, 25 + radius : 65 - radius] = 255
+    assert np.array_equal(mask, expected)
+
+
+def test_placement_mask_honours_the_image_own_mask():
+    """A mask handed in was resampled, so it is eroded like a warped one."""
+    radius = blending.MASK_EROSION
+    source = np.full((20, 30), 255, dtype=np.uint8)
+    source[:, :10] = 0
+
+    mask = blending._placement_mask(20, 30, 5, 4, 60, 40, source)
+
+    expected = np.zeros((40, 60), dtype=np.uint8)
+    expected[4 + radius : 24 - radius, 15 + radius : 35 - radius] = 255
+    assert np.array_equal(mask, expected)
+
+
 def test_feather_blend_with_given_mask_keeps_black_content():
     h, w = 50, 200
     left_color = np.array([180, 180, 180], dtype=np.uint8)
@@ -290,6 +317,54 @@ def test_stitch_images_matches_the_exposure():
 
     assert enabled.shape == disabled.shape
     assert enabled.mean() > disabled.mean() * 1.03
+
+
+def _side_by_side(shift=100, height=60, width=160):
+    """Two flat images and the homography putting the first left of the second."""
+    left = np.full((height, width, 3), 90, dtype=np.uint8)
+    right = np.full((height, width, 3), 150, dtype=np.uint8)
+    H = np.float32([[1, 0, -shift], [0, 1, 0], [0, 0, 1]])
+    return left, right, H
+
+
+def _composite(images, H, masks=None):
+    return blending.stitch_set_images(
+        images, [H, np.eye(3)], 1, [0], match_exposure=False, masks=masks
+    )
+
+
+def test_stitch_set_images_leaves_out_what_a_mask_calls_invalid():
+    """The black wedge a cylinder leaves must not end up in the panorama."""
+    left, right, H = _side_by_side()
+    left[:, :20] = 255  # what a warp leaves outside the projected content
+    mask_left = np.full(left.shape[:2], 255, dtype=np.uint8)
+    mask_left[:, :20] = 0
+    mask_right = np.full(right.shape[:2], 255, dtype=np.uint8)
+
+    with_masks = _composite([left, right], H, [mask_left, mask_right])
+    without_masks = _composite([left, right], H)
+
+    # Without a mask the wedge is content like any other and ends up on the
+    # canvas; with one it is not painted at all, and the crop takes it away.
+    assert without_masks[:, :20].max() == 255
+    assert with_masks.max() <= 150
+    assert with_masks.shape[1] < without_masks.shape[1] - 15
+
+
+def test_stitch_set_images_masks_the_reference_as_well():
+    """The reference is placed, not warped, but its own mask still applies."""
+    left, right, H = _side_by_side()
+    right[:, -20:] = 255
+    mask_left = np.full(left.shape[:2], 255, dtype=np.uint8)
+    mask_right = np.full(right.shape[:2], 255, dtype=np.uint8)
+    mask_right[:, -20:] = 0
+
+    with_masks = _composite([left, right], H, [mask_left, mask_right])
+    without_masks = _composite([left, right], H)
+
+    assert without_masks[:, -20:].max() == 255
+    assert with_masks.max() <= 150
+    assert with_masks.shape[1] < without_masks.shape[1] - 15
 
 
 # ------------------------------------------------------------------- auto-crop

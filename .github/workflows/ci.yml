@@ -32,3 +32,6 @@ jobs:
 
       - name: Test
         run: pytest
+
+      - name: Check JavaScript syntax
+        run: for f in static/*.js; do node --check "$f"; done

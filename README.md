@@ -2,16 +2,20 @@
 
 [![CI](https://github.com/Onurkutan/panorama-stitching/actions/workflows/ci.yml/badge.svg)](https://github.com/Onurkutan/panorama-stitching/actions/workflows/ci.yml)
 
-Two-image panorama stitching from scratch with Python and OpenCV: SIFT features,
-FLANN matching with Lowe's ratio test, RANSAC homography, perspective warping,
-exposure matching, seam feathering and automatic border cropping. Ships with a small
-web UI (English / Turkish) that stitches your own photo pairs or the bundled demo pairs,
-shows every intermediate step, and runs either against a tiny stdlib server or entirely
-inside the browser.
+Panorama stitching from scratch with Python and OpenCV: SIFT features, FLANN matching
+with Lowe's ratio test, RANSAC homographies, perspective warping, exposure matching, seam
+feathering and automatic border cropping. Two to six photos in any order: the arrangement
+is recovered from the pairwise matches. Ships with a small web UI (English / Turkish)
+that stitches your own photos or the bundled demo pairs, shows every intermediate step,
+and runs either against a tiny stdlib server or entirely inside the browser.
 
 | Clock tower | School yard | Pont du Gard |
 | --- | --- | --- |
-| ![Clock panorama](images/Clock/panorama_birlestirme.jpg) | ![School panorama](images/SchoolImage/panorama_birlestirme.jpg) | ![Aqueduct panorama](images/test1/panorama_birlestirme.jpg) |
+| ![Clock panorama](images/Clock/panorama.jpg) | ![School panorama](images/SchoolImage/panorama.jpg) | ![Aqueduct panorama](images/test1/panorama.jpg) |
+
+Six hand-held phone photos, given in any order, stitched on a cylinder:
+
+![Balcony sweep panorama](images/BalconySweep/panorama.jpg)
 
 ## Live demo
 
@@ -20,9 +24,10 @@ runs the very same Python modules inside the browser through
 [Pyodide](https://pyodide.org) (CPython and OpenCV compiled to WebAssembly), so no server
 is involved and uploaded photos never leave your machine. The first visit downloads about
 20 MB of runtime; after that a pair stitches in a few seconds. Inputs are downscaled to
-1400 px on the long side there. The page detects whether the Python server is available
-and otherwise switches to the in-browser pipeline, so the same `index.html` and `static/`
-serve both.
+1400 px on the long side there. The computation runs in a Web Worker, so the page stays
+responsive, shows the pipeline stage it is in, and a run can be cancelled. The page
+detects whether the Python server is available and otherwise switches to the in-browser
+pipeline, so the same `index.html` and `static/` serve both.
 
 ## Pipeline
 
@@ -32,12 +37,27 @@ serve both.
    ratio test (0.7).
 3. **Homography** (`panorama_stitching/homography.py`): `cv2.findHomography` with RANSAC
    (reprojection threshold 5 px, minimum 10 matches), inlier visualization.
-4. **Stitching** (`panorama_stitching/blending.py`): canvas size from the warped corners (degenerate
-   homographies are rejected before anything is allocated), left image warped into the
-   right image plane with eroded validity masks so the interpolation fringe never counts
-   as content, per-channel exposure matching on the overlap, feather blending in a band
-   around the seam that runs equidistant from both image borders (moving subjects stay
-   unblended outside it), and trimming of the black borders.
+4. **Arrangement** (`panorama_stitching/pipeline.py`, sets of more than two photos): every
+   pair is matched, the pairs form a graph weighted by RANSAC inliers, its maximum
+   spanning tree keeps only the strongest overlaps, the tree centre becomes the reference
+   frame and every other photo's homography is chained along the tree. Photos can be
+   given in any order and in any layout the tree can express (a row, a column, a grid).
+5. **Projection** (`panorama_stitching/projection.py`): a flat canvas cannot hold a wide
+   sweep (a photo 80-90 degrees away from the reference stretches towards infinity), so
+   sets of three or more photos are projected onto a cylinder first. The focal length is
+   estimated from the tree-edge homographies (Szeliski's focals-from-homography, median
+   over the edges; within about 1% of the EXIF value on the test photos), every photo is
+   warped onto the cylinder with a validity mask, the tree edges are matched again on the
+   cylinder and the chained transforms stay bounded. Two photos keep the planar path, so
+   their output is unchanged; `projection="planar"` or `"cylindrical"` overrides the
+   automatic choice.
+6. **Stitching** (`panorama_stitching/blending.py`): one canvas from all warped corners
+   (degenerate homographies are rejected before anything is allocated), photos warped into
+   the reference plane with eroded validity masks so the interpolation fringe never counts
+   as content, per-channel exposure matching on each overlap, feather blending in a band
+   around the seam that runs equidistant from the two borders (moving subjects stay
+   unblended outside it), composition outward from the reference, and trimming of the
+   black borders.
 
 Results on the bundled examples (FLANN and RANSAC are seeded, so the numbers are
 reproducible; about 2 s per pair on a laptop CPU):
@@ -47,6 +67,10 @@ reproducible; about 2 s per pair on a laptop CPU):
 | Clock tower | 8 313 / 5 516 | 1 571 | 1 490 | 1944 x 867 |
 | School yard | 7 641 / 10 041 | 816 | 795 | 3440 x 1200 |
 | Pont du Gard | 7 588 / 10 684 | 3 846 | 3 828 | 1812 x 696 |
+
+The six-photo balcony sweep (1600 px inputs) uses 5 of the 15 evaluated pairs,
+11 694 RANSAC inliers on those pairs, and produces a 3262 x 1512 cylindrical panorama in
+about 10 s.
 
 ## Quickstart
 
@@ -64,38 +88,58 @@ pip install -r requirements.txt      # or: pip install -e ".[dev]"
 python app.py            # optional port: python app.py 8080
 ```
 
-Open `http://127.0.0.1:8000`. **Your photos** takes a left and a right photo (drag and
-drop or file picker, about 30-50% overlap) and returns a downloadable panorama; **Demo
-pairs** runs one of the bundled pairs with one click. Both show the SIFT keypoints, the
-raw and the RANSAC-filtered matches and the keypoint / match / inlier counts. The
-interface is available in English and Turkish (toggle in the header).
-Generated files are written to `web_outputs/<job-id>/` and uploads to `web_uploads/`;
-job folders older than a day are removed automatically. Uploads are capped at 25 MB and
-inputs larger than 2400 px on the long side are downscaled before processing (the status
-line says so).
+Open `http://127.0.0.1:8000`. **Your photos** takes two to six overlapping photos in any
+order (drag and drop or file picker, about 30-50% overlap between neighbours) and returns
+a downloadable panorama; **Demo sets** runs one of the bundled sets (three pairs and the
+six-photo sweep) with one click. Both
+show the SIFT keypoints of every photo, the raw and the RANSAC-filtered matches of every
+pair the arrangement uses, the detected left-to-right order and the keypoint / match /
+inlier counts. The interface is English by default and available in Turkish (toggle in
+the header). Generated files are written to `web_outputs/<job-id>/` and uploads to
+`web_uploads/`; job folders older than a day are removed automatically. Uploads are
+capped at 40 MB per request and inputs larger than 2400 px on the long side are
+downscaled before processing (the status line says so).
 
 ### Command line
 
 ```bash
-python -m panorama_stitching.cli --headless            # all three demo pairs
-python -m panorama_stitching.cli --sets clock street   # a subset
+python -m panorama_stitching.cli photo1.jpg photo2.jpg photo3.jpg   # your own photos, any order
+python -m panorama_stitching.cli *.jpg --projection planar          # force a projection
+python -m panorama_stitching.cli --headless            # all bundled demo sets
+python -m panorama_stitching.cli --sets clock balcony  # a subset of the demo sets
 python -m panorama_stitching.cli --out /tmp/pano       # different output root
 ```
 
-(`panorama-stitch` is the same entry point after `pip install -e .`.) Each pair is
-written to `outputs/<set>/` as `panorama.jpg`, `left_keypoints.jpg`,
-`right_keypoints.jpg`, `matches.jpg` and `ransac_inliers.jpg`. Without `--headless`
-(or `HEADLESS=1`) the last panorama is also shown in an OpenCV window. Failures such as
-too few matches are reported per pair and the remaining pairs still run.
+(`panorama-stitch` is the same entry point after `pip install -e .`.) Your own photos
+are written to `outputs/custom/` as `panorama.jpg`, `keypoints_<k>.jpg`,
+`matches_<i>_<j>.jpg` and `ransac_<i>_<j>.jpg`; each demo pair goes to `outputs/<set>/`
+as `panorama.jpg`, `left_keypoints.jpg`, `right_keypoints.jpg`, `matches.jpg` and
+`ransac_inliers.jpg`. Without `--headless` (or `HEADLESS=1`) the last panorama is also
+shown in an OpenCV window. Failures such as too few matches are reported per set and the
+remaining sets still run.
 
 From Python:
 
 ```python
-from panorama_stitching import stitch_pair
+from panorama_stitching import stitch_pair, stitch_set
 
-result = stitch_pair("left.jpg", "right.jpg", "out/", max_side=2400)
-print(result["metrics"], result["files"])
+# any number of photos (2 to 6) in any order; projection="auto" picks the
+# cylinder for three or more photos and the plane for a pair
+result = stitch_set(
+    ["a.jpg", "b.jpg", "c.jpg"],
+    "out/",
+    max_side=2400,
+    progress=lambda stage, step, total: print(f"{step}/{total} {stage}"),
+)
+m = result["metrics"]
+print(m["order"], m["projection"], m["focalPx"], m["pairs"], result["files"])
+
+# the classic two-image call (left photo on the left)
+pair = stitch_pair("left.jpg", "right.jpg", "out/")
 ```
+
+Both raise `PanoramaError` with a stable `code` (for example `not_enough_matches`,
+`image_not_connected`) and, when relevant, `details` naming the photos involved.
 
 ## Development
 
@@ -113,32 +157,37 @@ panorama_stitching/     the package
   matching.py             FLANN kNN matching + Lowe ratio test
   homography.py           RANSAC homography + inlier visualization
   blending.py             validity masks, exposure matching, seam feathering, auto-crop
-  pipeline.py             stitch_pair(): the pipeline shared by the web app and the CLI
+  projection.py           focal estimate and cylindrical warp for wide sweeps
+  pipeline.py             stitch_pair() / stitch_set(): the pipeline shared by the web app and the CLI
   cli.py                  command line entry point over the demo pairs
   errors.py               PanoramaError (with a stable .code) raised on unusable input
 app.py                  stdlib HTTP server: static files, /api/examples, /api/stitch
 index.html, static/     web UI (vanilla JS, no build step, English / Turkish)
 tests/                  pytest suite (synthetic images plus one real downscaled pair)
-images/                 demo image pairs and their stitched panoramas
+images/                 demo sets (three pairs, one six-photo sweep) and their panoramas
 ```
 
 ## Limitations and ideas
 
-- A single homography assumes a rotating camera or a distant scene; strong parallax
-  (close objects with camera translation) cannot be aligned by any 3x3 warp.
+- Homographies assume a rotating camera or a distant scene; strong parallax (close
+  objects with camera translation) cannot be aligned by any 3x3 warp.
+- The cylinder assumes one focal length for the whole set (no zooming between shots)
+  and a horizontal sweep; a spherical projection would also handle tilting up and down.
+- Two photos are still stitched on a plane, which is fine up to roughly 100 degrees of
+  combined field of view.
+- Chained homographies accumulate small errors along the tree; bundle adjustment would
+  refine all of them jointly.
+- Phone photos: HEIC files are not decoded by OpenCV or by most browsers; export or
+  share them as JPEG (the iPhone "Most Compatible" setting) or convert them first.
 - Blending is a feather band along a fixed geometric seam. Seam finding
   (`cv2.detail_DpSeamFinder`) or multi-band blending would hide misalignments better.
-- Only two images are stitched; chaining more views needs a reference frame and bundle
-  adjustment.
 
 Requirements: Python 3.10+, `opencv-python` 4.8+ (SIFT is included in the main
-package since 4.4), `numpy`. Errors raised by the pipeline are `PanoramaError`
-instances with an English message and a stable `code` (for example
-`not_enough_matches`), which the web UI maps to localized messages.
+package since 4.4), `numpy`.
 
 ## Sample image credits
 
-- `images/SchoolImage`: photographed by Onur Kutan.
+- `images/SchoolImage` and `images/BalconySweep`: photographed by Onur Kutan.
 - `images/Clock` (Carnegie Mellon University campus) and `images/test1` (Pont du Gard):
   third-party photographs used here for educational and demonstration purposes only.
   Copyright remains with their respective owners; they are not covered by this

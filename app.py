@@ -13,7 +13,14 @@ from urllib.parse import unquote, urlparse
 import cv2
 
 from panorama_stitching.errors import PanoramaError
-from panorama_stitching.pipeline import EXAMPLES, PROJECT_DIR, example_paths, stitch_pair
+from panorama_stitching.pipeline import (
+    EXAMPLES,
+    MAX_IMAGES,
+    MIN_IMAGES,
+    PROJECT_DIR,
+    example_paths,
+    stitch_set,
+)
 
 STATIC_DIR = PROJECT_DIR / "static"
 OUTPUT_DIR = PROJECT_DIR / "web_outputs"
@@ -26,7 +33,7 @@ MEDIA_ROOTS = {
     "web_uploads": UPLOAD_DIR,
 }
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+MAX_UPLOAD_BYTES = 40 * 1024 * 1024  # 40 MB, enough for a set of phone photos
 JOB_TTL_HOURS = 24
 
 # Longest side (in pixels) the web pipeline works on. Larger inputs are
@@ -84,6 +91,54 @@ def _parse_disposition(header_value):
     for key, value in re.findall(r'(\w+)="([^"]*)"', header_value):
         values[key] = value
     return values
+
+
+def _upload_list(files, name):
+    """The uploads of one multipart field, always as a list.
+
+    _read_multipart keeps a field that appears once as a single entry, so a
+    form carrying exactly one `images` file still reads as a one-element list
+    here while `mode` and the other scalar fields keep their old shape.
+    """
+    upload = files.get(name)
+    if upload is None:
+        return []
+    if isinstance(upload, list):
+        return upload
+    return [upload]
+
+
+def _media_url(path):
+    """A /media/ URL for a file that lives under one of the media roots.
+
+    Built from the roots rather than from PROJECT_DIR: an upload directory is
+    configurable (the tests point it at a temporary path), and only the roots
+    know where it currently is.
+    """
+    for name, root in MEDIA_ROOTS.items():
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            continue
+        return f"/media/{name}/{relative.as_posix()}"
+    return None
+
+
+def _job_urls(job_id, files):
+    """Map the pipeline's output file names onto /generated/<job>/ URLs.
+
+    "panorama" is a single name, "keypoints"/"matches"/"ransac" are lists, and
+    "pairs" is not a file list at all but the [i, j] labels belonging to them.
+    """
+    urls = {}
+    for name, value in files.items():
+        if name == "pairs":
+            urls[name] = value
+        elif isinstance(value, list):
+            urls[name] = [f"/generated/{job_id}/{item}" for item in value]
+        else:
+            urls[name] = f"/generated/{job_id}/{value}"
+    return urls
 
 
 class PanoramaHandler(BaseHTTPRequestHandler):
@@ -167,7 +222,10 @@ class PanoramaHandler(BaseHTTPRequestHandler):
                 self,
                 {
                     "ok": False,
-                    "error": "The uploaded data is too large (25 MB maximum).",
+                    "error": (
+                        "The uploaded data is too large "
+                        f"({MAX_UPLOAD_BYTES // (1024 * 1024)} MB maximum)."
+                    ),
                     "code": "upload_too_large",
                 },
                 status=413,
@@ -181,26 +239,16 @@ class PanoramaHandler(BaseHTTPRequestHandler):
 
             mode = fields.get("mode", "example")
             if mode == "example":
-                left_path, right_path = example_paths(fields.get("example", "clock"))
-                source = {
-                    "left": f"/media/{left_path.relative_to(PROJECT_DIR).as_posix()}",
-                    "right": f"/media/{right_path.relative_to(PROJECT_DIR).as_posix()}",
-                }
+                # The bundled examples are pairs, but they run through the very
+                # same set pipeline so both modes answer with one shape.
+                image_paths = list(example_paths(fields.get("example", "clock")))
             else:
                 upload_dir = UPLOAD_DIR / job_id
                 upload_dir.mkdir(parents=True, exist_ok=True)
-                left_path = self._save_upload(files, "leftImage", upload_dir / "left.jpg")
-                right_path = self._save_upload(files, "rightImage", upload_dir / "right.jpg")
-                source = {
-                    "left": f"/media/{left_path.relative_to(PROJECT_DIR).as_posix()}",
-                    "right": f"/media/{right_path.relative_to(PROJECT_DIR).as_posix()}",
-                }
+                image_paths = self._save_uploads(files, upload_dir)
 
-            result = stitch_pair(left_path, right_path, job_dir, max_side=MAX_INPUT_SIDE)
-            files_payload = {
-                name: f"/generated/{job_id}/{filename}"
-                for name, filename in result["files"].items()
-            }
+            source = [_media_url(path) for path in image_paths]
+            result = stitch_set(image_paths, job_dir, max_side=MAX_INPUT_SIDE)
             return _json_response(
                 self,
                 {
@@ -208,15 +256,14 @@ class PanoramaHandler(BaseHTTPRequestHandler):
                     "jobId": job_id,
                     "source": source,
                     "metrics": result["metrics"],
-                    "files": files_payload,
+                    "files": _job_urls(job_id, result["files"]),
                 },
             )
         except PanoramaError as exc:
-            return _json_response(
-                self,
-                {"ok": False, "error": str(exc), "code": exc.code},
-                status=422,
-            )
+            payload = {"ok": False, "error": str(exc), "code": exc.code}
+            if exc.details is not None:
+                payload["details"] = exc.details
+            return _json_response(self, payload, status=422)
         except Exception:
             logging.exception("[web] unexpected error while handling /api/stitch")
             return _json_response(
@@ -257,13 +304,14 @@ class PanoramaHandler(BaseHTTPRequestHandler):
     def _examples_payload(self):
         payload = []
         for example in EXAMPLES:
-            left_path, right_path = example_paths(example["id"])
             payload.append(
                 {
                     "id": example["id"],
                     "title": example["title"],
-                    "left": f"/media/{left_path.relative_to(PROJECT_DIR).as_posix()}",
-                    "right": f"/media/{right_path.relative_to(PROJECT_DIR).as_posix()}",
+                    "files": [
+                        f"/media/{path.relative_to(PROJECT_DIR).as_posix()}"
+                        for path in example_paths(example["id"])
+                    ],
                 }
             )
         return payload
@@ -303,36 +351,62 @@ class PanoramaHandler(BaseHTTPRequestHandler):
                 continue
 
             if filename:
-                files[name] = {"filename": filename, "content": data}
+                # A field may repeat (the `images` set); the first occurrence
+                # stays a plain entry, further ones turn it into a list.
+                entry = {"filename": filename, "content": data}
+                existing = files.get(name)
+                if existing is None:
+                    files[name] = entry
+                elif isinstance(existing, list):
+                    existing.append(entry)
+                else:
+                    files[name] = [existing, entry]
             else:
                 fields[name] = data.decode("utf-8", "replace")
 
         return fields, files
 
-    def _save_upload(self, files, field_name, destination):
-        upload = files.get(field_name)
-        if not upload or not upload["content"]:
+    def _save_uploads(self, files, upload_dir):
+        """Store the uploaded `images` set on disk and return their paths.
+
+        The field may repeat any number of times and the order it arrives in
+        does not matter: the pipeline recovers the arrangement itself.
+        """
+        uploads = [item for item in _upload_list(files, "images") if item["content"]]
+        if not uploads:
+            raise PanoramaError("Please upload the photos to stitch.", code="upload_missing")
+        if len(uploads) < MIN_IMAGES:
             raise PanoramaError(
-                "Please upload both the left and the right image.", code="upload_missing"
+                f"A panorama needs at least {MIN_IMAGES} photos; {len(uploads)} were uploaded.",
+                code="too_few_images",
+            )
+        if len(uploads) > MAX_IMAGES:
+            raise PanoramaError(
+                f"At most {MAX_IMAGES} photos can be stitched at once; "
+                f"{len(uploads)} were uploaded.",
+                code="too_many_images",
             )
 
-        suffix = Path(upload["filename"]).suffix.lower()
-        if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
-            suffix = ".jpg"
-        destination = destination.with_suffix(suffix)
-        destination.write_bytes(upload["content"])
+        paths = []
+        for index, upload in enumerate(uploads, start=1):
+            suffix = Path(upload["filename"]).suffix.lower()
+            if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+                suffix = ".jpg"
+            destination = upload_dir / f"image_{index}{suffix}"
+            destination.write_bytes(upload["content"])
 
-        image = cv2.imread(str(destination))
-        if image is None:
-            try:
-                destination.unlink()
-            except OSError:
-                pass
-            raise PanoramaError(
-                "The uploaded file could not be read as an image.", code="upload_not_image"
-            )
-
-        return destination
+            if cv2.imread(str(destination)) is None:
+                try:
+                    destination.unlink()
+                except OSError:
+                    pass
+                raise PanoramaError(
+                    f"Uploaded file {index} could not be read as an image.",
+                    code="upload_not_image",
+                    details={"image": index},
+                )
+            paths.append(destination)
+        return paths
 
     def log_message(self, format, *args):
         print(f"[web] {self.address_string()} - {format % args}")

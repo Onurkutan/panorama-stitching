@@ -32,6 +32,14 @@ def test_default_code_is_unexpected():
 
 def test_every_code_is_declared():
     assert PanoramaError("x", code="image_unreadable").code in ERROR_CODES
+    for code in ("too_few_images", "too_many_images", "image_not_connected"):
+        assert code in ERROR_CODES
+
+
+def test_details_default_to_none():
+    assert PanoramaError("something went wrong").details is None
+    error = PanoramaError("nope", code="image_not_connected", details={"image": 3})
+    assert error.details == {"image": 3}
 
 
 def test_flat_image_has_not_enough_features_code():

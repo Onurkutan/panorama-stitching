@@ -4,7 +4,7 @@ import pytest
 
 from panorama_stitching.errors import PanoramaError
 from panorama_stitching.homography import MIN_MATCH_COUNT
-from panorama_stitching.pipeline import stitch_pair
+from panorama_stitching.pipeline import PROGRESS_STAGES, stitch_pair
 
 
 @pytest.mark.slow
@@ -78,3 +78,24 @@ def test_stitch_pair_output_names(tmp_path, clock_pair_paths):
         "panoramaHeight",
         "inputScale",
     }
+
+
+def test_stitch_pair_reports_progress_stages(tmp_path, clock_pair_paths):
+    left_path, right_path = clock_pair_paths
+    calls = []
+
+    def record(stage, step, total):
+        calls.append((stage, step, total))
+
+    stitch_pair(left_path, right_path, tmp_path, max_side=400, progress=record)
+
+    assert [call[0] for call in calls] == list(PROGRESS_STAGES)
+    assert [call[1] for call in calls] == list(range(1, len(PROGRESS_STAGES) + 1))
+    assert {call[2] for call in calls} == {len(PROGRESS_STAGES)}
+
+
+def test_stitch_pair_without_progress_callback(tmp_path, clock_pair_paths):
+    left_path, right_path = clock_pair_paths
+    # The default must not require a callback and must not change the result.
+    result = stitch_pair(left_path, right_path, tmp_path, max_side=400)
+    assert result["metrics"]["inliers"] > 0

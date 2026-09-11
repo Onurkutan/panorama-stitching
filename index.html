@@ -23,9 +23,6 @@
             A visual interface that runs SIFT, FLANN, RANSAC and feather blending on a single screen.
           </p>
         </div>
-        <div class="hero-preview" aria-hidden="true">
-          <img src="images/Clock/panorama_birlestirme.jpg" alt="" />
-        </div>
       </section>
 
       <section class="workspace">
@@ -41,61 +38,42 @@
           </div>
 
           <div id="uploadPanel" class="control-section">
-            <div class="upload-grid">
-              <label id="leftZone" class="drop-zone" for="leftImage">
-                <input id="leftImage" name="leftImage" type="file" accept="image/*" />
-                <span class="drop-zone-title" data-i18n="upload.leftLabel">Left photo</span>
-                <div class="drop-zone-preview">
-                  <img id="leftPreview" class="drop-zone-thumb" alt="" hidden />
-                  <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M12 16V4m0 0 4 4m-4-4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </div>
-                <strong id="leftFileName">Choose a file</strong>
-              </label>
+            <label id="dropZone" class="drop-zone" for="photosInput">
+              <input id="photosInput" name="images" type="file" accept="image/*" multiple />
+              <span class="drop-zone-title" data-i18n="upload.zoneTitle">Add photos</span>
+              <div class="drop-zone-preview">
+                <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 16V4m0 0 4 4m-4-4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </div>
+              <strong data-i18n="upload.zoneCta">Click or drag photos here</strong>
+            </label>
 
-              <button id="swapButton" class="swap-button" type="button" data-i18n-aria-label="upload.swapAriaLabel">
-                <span aria-hidden="true">⇄</span>
-              </button>
-
-              <label id="rightZone" class="drop-zone" for="rightImage">
-                <input id="rightImage" name="rightImage" type="file" accept="image/*" />
-                <span class="drop-zone-title" data-i18n="upload.rightLabel">Right photo</span>
-                <div class="drop-zone-preview">
-                  <img id="rightPreview" class="drop-zone-thumb" alt="" hidden />
-                  <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path d="M12 16V4m0 0 4 4m-4-4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </div>
-                <strong id="rightFileName">Choose a file</strong>
-              </label>
+            <div class="photo-toolbar">
+              <span id="photoCounter" class="photo-counter"></span>
             </div>
+
+            <div id="photoGrid" class="photo-grid"></div>
+
             <p class="hint" data-i18n="upload.hint">
-              Tip: the left photo should be the one on the left, with about 30-50% overlap between the two shots.
+              Add 2 to 6 overlapping photos in any order; the arrangement is detected automatically.
             </p>
           </div>
 
           <div id="examplePanel" class="control-section hidden">
             <label for="exampleSelect" data-i18n="example.datasetLabel">Dataset</label>
             <select id="exampleSelect"></select>
-            <div class="source-grid">
-              <figure>
-                <img id="exampleLeft" data-i18n-alt="example.leftAlt" alt="Left example photo" />
-                <figcaption data-i18n="example.leftCaption">Left</figcaption>
-              </figure>
-              <figure>
-                <img id="exampleRight" data-i18n-alt="example.rightAlt" alt="Right example photo" />
-                <figcaption data-i18n="example.rightCaption">Right</figcaption>
-              </figure>
-            </div>
+            <div id="examplePreview" class="source-grid"></div>
           </div>
 
-          <button id="runButton" class="run-button" type="button">
-            <span class="run-icon" aria-hidden="true">▶</span>
-            <span id="runButtonLabel">Create panorama</span>
-          </button>
+          <div class="run-row">
+            <button id="runButton" class="run-button" type="button">
+              <span class="run-icon" aria-hidden="true">▶</span>
+              <span id="runButtonLabel">Create panorama</span>
+            </button>
+            <button id="cancelButton" class="cancel-button" type="button" hidden data-i18n="actions.cancel">Cancel</button>
+          </div>
 
           <div id="status" class="status" aria-live="polite">Ready</div>
           <progress id="progressBar" class="progress-bar" hidden></progress>
@@ -126,18 +104,13 @@
             <h3 class="details-heading" data-i18n="results.detailsHeading">Pipeline details</h3>
 
             <div class="metrics" aria-live="polite">
-              <div><span id="mLeft">-</span><small data-i18n="metrics.left">Left keypoints</small></div>
-              <div><span id="mRight">-</span><small data-i18n="metrics.right">Right keypoints</small></div>
-              <div><span id="mMatches">-</span><small data-i18n="metrics.matches">Good matches</small></div>
+              <div><span id="mKeypoints">-</span><small data-i18n="metrics.keypoints">Total keypoints</small></div>
+              <div><span id="mPairs">-</span><small data-i18n="metrics.pairs">Pairs used</small></div>
               <div><span id="mInliers">-</span><small data-i18n="metrics.inliers">RANSAC inliers</small></div>
+              <div><span id="mOrder">-</span><small data-i18n="metrics.order">Detected order</small></div>
             </div>
 
-            <div class="tabs" role="tablist" data-i18n-aria-label="results.tabsAriaLabel">
-              <button class="tab active" type="button" role="tab" aria-selected="true" data-target="matches" data-i18n="tabs.matches">Matches</button>
-              <button class="tab" type="button" role="tab" aria-selected="false" data-target="ransac" data-i18n="tabs.ransac">RANSAC inliers</button>
-              <button class="tab" type="button" role="tab" aria-selected="false" data-target="leftKeypoints" data-i18n="tabs.leftKeypoints">Left keypoints</button>
-              <button class="tab" type="button" role="tab" aria-selected="false" data-target="rightKeypoints" data-i18n="tabs.rightKeypoints">Right keypoints</button>
-            </div>
+            <div id="detailTabs" class="tabs" role="tablist" data-i18n-aria-label="results.tabsAriaLabel"></div>
             <div class="detail-frame">
               <img id="detailImage" data-i18n-alt="results.detailAlt" alt="Intermediate pipeline image" hidden />
             </div>
