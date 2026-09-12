@@ -10,8 +10,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-import cv2
-
 from panorama_stitching.errors import PanoramaError
 from panorama_stitching.pipeline import (
     EXAMPLES,
@@ -19,6 +17,7 @@ from panorama_stitching.pipeline import (
     MIN_IMAGES,
     PROJECT_DIR,
     example_paths,
+    read_image,
     stitch_set,
 )
 
@@ -41,6 +40,10 @@ JOB_TTL_HOURS = 24
 # more would otherwise cost many seconds of SIFT time and hundreds of MB per
 # request for no visible gain in the browser.
 MAX_INPUT_SIDE = 2400
+
+# Upload extensions kept as-is; anything else is stored as .jpg and left to the
+# decoder to accept or reject.
+UPLOAD_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".heif"}
 
 CONNECTION_ERRORS = (ConnectionAbortedError, BrokenPipeError, ConnectionResetError)
 
@@ -390,21 +393,27 @@ class PanoramaHandler(BaseHTTPRequestHandler):
         paths = []
         for index, upload in enumerate(uploads, start=1):
             suffix = Path(upload["filename"]).suffix.lower()
-            if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}:
+            if suffix not in UPLOAD_SUFFIXES:
                 suffix = ".jpg"
             destination = upload_dir / f"image_{index}{suffix}"
             destination.write_bytes(upload["content"])
 
-            if cv2.imread(str(destination)) is None:
+            # Same reader as the pipeline, so HEIC uploads are accepted exactly
+            # when the optional decoder is installed.
+            try:
+                read_image(destination)
+            except PanoramaError as exc:
                 try:
                     destination.unlink()
                 except OSError:
                     pass
+                if exc.code == "heic_unsupported":
+                    raise PanoramaError(str(exc), code=exc.code, details={"image": index}) from exc
                 raise PanoramaError(
                     f"Uploaded file {index} could not be read as an image.",
                     code="upload_not_image",
                     details={"image": index},
-                )
+                ) from exc
             paths.append(destination)
         return paths
 

@@ -625,3 +625,13 @@ figcaption {
     margin-bottom: 4px;
   }
 }
+
+.photo-thumb-fallback {
+  display: grid;
+  place-items: center;
+  background: #dfe5e2;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}

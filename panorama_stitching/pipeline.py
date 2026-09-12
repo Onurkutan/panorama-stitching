@@ -87,13 +87,70 @@ def example_paths(example_id):
     return tuple(folder / name for name in example["files"])
 
 
-def _read_image(path):
+# HEIC/HEIF (the default iPhone format) is not decoded by OpenCV. It is read
+# through the optional pillow-heif package when it is installed; the file is
+# recognised by extension or by the ISO base media "ftyp" brand.
+HEIC_SUFFIXES = {".heic", ".heif", ".hif"}
+_HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1"}
+
+
+def looks_like_heic(path):
+    """True when the file has a HEIC/HEIF extension or ftyp brand."""
+    path = Path(path)
+    if path.suffix.lower() in HEIC_SUFFIXES:
+        return True
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(16)
+    except OSError:
+        return False
+    return len(header) >= 12 and header[4:8] == b"ftyp" and header[8:12] in _HEIC_BRANDS
+
+
+def _decode_heic(path):
+    """Decode a HEIC file to a BGR array with pillow-heif, or explain what is missing."""
+    try:
+        import pillow_heif
+        from PIL import Image, ImageOps
+    except ImportError as exc:
+        raise PanoramaError(
+            f"{Path(path).name} is a HEIC photo; decoding it needs the optional pillow-heif "
+            'package (pip install "panorama-stitching[heic]" or pip install pillow-heif), '
+            "or export the photo as JPEG.",
+            code="heic_unsupported",
+        ) from exc
+
+    pillow_heif.register_heif_opener()
+    try:
+        with Image.open(path) as picture:
+            # exif_transpose applies the stored orientation the way cv2.imread does for JPEG.
+            rgb = ImageOps.exif_transpose(picture).convert("RGB")
+            array = np.asarray(rgb)
+    except Exception as exc:
+        raise PanoramaError(
+            f"Could not decode the HEIC photo: {Path(path).name}", code="image_unreadable"
+        ) from exc
+    return cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
+
+
+def read_image(path):
+    """Read an image as BGR; JPEG/PNG/... through OpenCV, HEIC through pillow-heif.
+
+    Raises PanoramaError(code="image_unreadable") when the file cannot be
+    decoded and code="heic_unsupported" when a HEIC file is given but the
+    optional decoder is not installed.
+    """
     image = cv2.imread(str(path))
-    if image is None:
-        # Path() so a plain string path also produces a message, not a crash.
-        name = Path(path).name
-        raise PanoramaError(f"Could not read the image: {name}", code="image_unreadable")
-    return image
+    if image is not None:
+        return image
+    if looks_like_heic(path):
+        return _decode_heic(path)
+    # Path() so a plain string path also produces a message, not a crash.
+    raise PanoramaError(f"Could not read the image: {Path(path).name}", code="image_unreadable")
+
+
+def _read_image(path):
+    return read_image(path)
 
 
 def _downscale(image, scale):
@@ -316,14 +373,12 @@ def _read_images(paths):
     """Read every input image, naming the offending one when a read fails."""
     images = []
     for index, path in enumerate(paths, start=1):
-        image = cv2.imread(str(path))
-        if image is None:
+        try:
+            images.append(read_image(path))
+        except PanoramaError as exc:
             raise PanoramaError(
-                f"Could not read image {index}: {Path(path).name}",
-                code="image_unreadable",
-                details={"image": index},
-            )
-        images.append(image)
+                f"Image {index}: {exc}", code=exc.code, details={"image": index}
+            ) from exc
     return images
 
 

@@ -3,11 +3,12 @@
 [![CI](https://github.com/Onurkutan/panorama-stitching/actions/workflows/ci.yml/badge.svg)](https://github.com/Onurkutan/panorama-stitching/actions/workflows/ci.yml)
 
 Panorama stitching from scratch with Python and OpenCV: SIFT features, FLANN matching
-with Lowe's ratio test, RANSAC homographies, perspective warping, exposure matching, seam
-feathering and automatic border cropping. Two to six photos in any order: the arrangement
-is recovered from the pairwise matches. Ships with a small web UI (English / Turkish)
-that stitches your own photos or the bundled demo pairs, shows every intermediate step,
-and runs either against a tiny stdlib server or entirely inside the browser.
+with Lowe's ratio test, RANSAC homographies, cylindrical projection for wide sweeps,
+perspective warping, exposure matching, seam feathering and automatic border cropping.
+Two to six photos in any order: the arrangement is recovered from the pairwise matches.
+Ships with a small web UI (English / Turkish) that stitches your own photos or the
+bundled demo sets, shows every intermediate step, and runs either against a tiny stdlib
+server or entirely inside the browser.
 
 | Clock tower | School yard | Pont du Gard |
 | --- | --- | --- |
@@ -32,7 +33,7 @@ pipeline, so the same `index.html` and `static/` serve both.
 ## Pipeline
 
 1. **Feature detection** (`panorama_stitching/features.py`): grayscale conversion,
-   `cv2.SIFT_create()`, keypoints and 128-d descriptors for both images.
+   `cv2.SIFT_create()`, keypoints and 128-d descriptors for every photo.
 2. **Matching** (`panorama_stitching/matching.py`): FLANN kd-tree kNN (k=2) and Lowe's
    ratio test (0.7).
 3. **Homography** (`panorama_stitching/homography.py`): `cv2.findHomography` with RANSAC
@@ -46,7 +47,7 @@ pipeline, so the same `index.html` and `static/` serve both.
    sweep (a photo 80-90 degrees away from the reference stretches towards infinity), so
    sets of three or more photos are projected onto a cylinder first. The focal length is
    estimated from the tree-edge homographies (Szeliski's focals-from-homography, median
-   over the edges; within about 1% of the EXIF value on the test photos), every photo is
+   over the edges; within about 2% of the EXIF value on the test photos), every photo is
    warped onto the cylinder with a validity mask, the tree edges are matched again on the
    cylinder and the chained transforms stay bounded. Two photos keep the planar path, so
    their output is unchanged; `projection="planar"` or `"cylindrical"` overrides the
@@ -112,9 +113,11 @@ python -m panorama_stitching.cli --out /tmp/pano       # different output root
 
 (`panorama-stitch` is the same entry point after `pip install -e .`.) Your own photos
 are written to `outputs/custom/` as `panorama.jpg`, `keypoints_<k>.jpg`,
-`matches_<i>_<j>.jpg` and `ransac_<i>_<j>.jpg`; each demo pair goes to `outputs/<set>/`
-as `panorama.jpg`, `left_keypoints.jpg`, `right_keypoints.jpg`, `matches.jpg` and
-`ransac_inliers.jpg`. Without `--headless` (or `HEADLESS=1`) the last panorama is also
+`matches_<i>_<j>.jpg` and `ransac_<i>_<j>.jpg` (`--name` changes the folder); each demo
+pair goes to `outputs/<set>/` as `panorama.jpg`, `left_keypoints.jpg`,
+`right_keypoints.jpg`, `matches.jpg` and `ransac_inliers.jpg`, and the six-photo demo set
+uses the same per-photo naming as your own photos. Without `--headless` (or `HEADLESS=1`)
+the last panorama is also
 shown in an OpenCV window. Failures such as too few matches are reported per set and the
 remaining sets still run.
 
@@ -159,11 +162,12 @@ panorama_stitching/     the package
   blending.py             validity masks, exposure matching, seam feathering, auto-crop
   projection.py           focal estimate and cylindrical warp for wide sweeps
   pipeline.py             stitch_pair() / stitch_set(): the pipeline shared by the web app and the CLI
-  cli.py                  command line entry point over the demo pairs
-  errors.py               PanoramaError (with a stable .code) raised on unusable input
+  cli.py                  command line entry point for your photos or the demo sets
+  errors.py               PanoramaError (with a stable .code and .details) on unusable input
 app.py                  stdlib HTTP server: static files, /api/examples, /api/stitch
-index.html, static/     web UI (vanilla JS, no build step, English / Turkish)
-tests/                  pytest suite (synthetic images plus one real downscaled pair)
+index.html, static/     web UI (vanilla JS, no build step, English / Turkish); worker.js runs
+                        the pipeline in the browser through Pyodide
+tests/                  pytest suite (synthetic images plus downscaled real sets)
 images/                 demo sets (three pairs, one six-photo sweep) and their panoramas
 ```
 
@@ -177,13 +181,17 @@ images/                 demo sets (three pairs, one six-photo sweep) and their p
   combined field of view.
 - Chained homographies accumulate small errors along the tree; bundle adjustment would
   refine all of them jointly.
-- Phone photos: HEIC files are not decoded by OpenCV or by most browsers; export or
-  share them as JPEG (the iPhone "Most Compatible" setting) or convert them first.
+- HEIC photos (the iPhone default) are decoded by the server and the CLI when the optional
+  extra is installed (`pip install -e ".[heic]"`, or `pip install pillow-heif`); without it
+  they are rejected with a clear message. The in-browser demo can only use HEIC in Safari;
+  elsewhere export the photos as JPEG (iPhone: Settings > Camera > Formats > Most
+  Compatible).
 - Blending is a feather band along a fixed geometric seam. Seam finding
   (`cv2.detail_DpSeamFinder`) or multi-band blending would hide misalignments better.
 
 Requirements: Python 3.10+, `opencv-python` 4.8+ (SIFT is included in the main
-package since 4.4), `numpy`.
+package since 4.4), `numpy`; optionally `pillow-heif` for HEIC input (`pip install -e
+".[heic]"`).
 
 ## Sample image credits
 

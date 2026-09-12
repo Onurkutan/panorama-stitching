@@ -16,9 +16,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+heic = [
+    "pillow>=10",
+    "pillow-heif>=0.16",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
+    "pillow>=10",
+    "pillow-heif>=0.16",
 ]
 
 [project.scripts]

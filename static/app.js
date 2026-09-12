@@ -132,6 +132,8 @@ const STRINGS = {
     "error.pyodide_failed": "Could not load Python and OpenCV in your browser; check your connection.",
     "error.fetch_failed": "Could not fetch one of the required files; check your connection.",
     "error.unexpected": "An unexpected error occurred.",
+    "error.heic_unsupported":
+      "HEIC photos could not be decoded here. Export them as JPEG (iPhone: Settings > Camera > Formats > Most Compatible), use Safari, or install the optional HEIC support on the server.",
     "error.pairSuffix": " (photos {i} and {j})",
     "error.imageSuffix": " (photo {i})",
   },
@@ -220,6 +222,8 @@ const STRINGS = {
     "error.pyodide_failed": "Python ve OpenCV tarayıcınıza yüklenemedi; bağlantınızı kontrol edin.",
     "error.fetch_failed": "Gerekli dosyalardan biri alınamadı; bağlantınızı kontrol edin.",
     "error.unexpected": "Beklenmeyen bir hata oluştu.",
+    "error.heic_unsupported":
+      "HEIC fotoğraflar burada çözülemedi. JPEG olarak dışa aktarın (iPhone: Ayarlar > Kamera > Biçimler > En Uyumlu), Safari kullanın veya sunucuya isteğe bağlı HEIC desteğini kurun.",
     "error.pairSuffix": " (fotoğraf {i} ve {j})",
     "error.imageSuffix": " (fotoğraf {i})",
   },
@@ -358,11 +362,24 @@ function buildDoneMessage(metrics, backendName) {
 // Shrinks a photo to UPLOAD_MAX_SIDE on its long side (JPEG, EXIF orientation
 // applied). Anything the browser cannot decode (for example HEIC outside
 // Safari) is passed through unchanged and left to the pipeline to reject.
-async function shrinkForUpload(file) {
+function looksLikeHeic(file) {
+  const type = (file.type || "").toLowerCase();
+  return type === "image/heic" || type === "image/heif" || /\.(heic|heif|hif)$/i.test(file.name || "");
+}
+
+// canDefer: whether an undecodable file may be passed through untouched. The
+// server may still decode HEIC with its optional decoder; the in-browser
+// pipeline never can, so there the failure is reported right away.
+async function shrinkForUpload(file, canDefer) {
   let bitmap;
   try {
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   } catch (error) {
+    if (!canDefer && looksLikeHeic(file)) {
+      const failure = new Error("HEIC photo cannot be decoded in this browser.");
+      failure.code = "heic_unsupported";
+      throw failure;
+    }
     return file;
   }
   try {
@@ -739,6 +756,16 @@ function renderPhotoGrid() {
         </div>`
     )
     .join("");
+  // Browsers other than Safari cannot render HEIC previews; show the format instead.
+  els.photoGrid.querySelectorAll(".photo-thumb").forEach((image, index) => {
+    image.addEventListener("error", () => {
+      const fallback = document.createElement("div");
+      fallback.className = "photo-thumb photo-thumb-fallback";
+      const name = state.photos[index]?.file.name || "";
+      fallback.textContent = (name.split(".").pop() || "?").toUpperCase().slice(0, 5);
+      image.replaceWith(fallback);
+    });
+  });
   els.photoCounter.textContent = t("upload.counter", { count: state.photos.length, max: MAX_PHOTOS });
   renderRunButton();
 }
@@ -869,7 +896,10 @@ async function runStitching() {
   try {
     if (state.mode === "upload") {
       setStatus(() => t("status.preparingPhotos"));
-      input.files = await Promise.all(state.photos.map((photo) => shrinkForUpload(photo.file)));
+      const canDefer = state.backend.name === "server";
+      input.files = await Promise.all(
+        state.photos.map((photo) => shrinkForUpload(photo.file, canDefer))
+      );
     }
     if (state.backend.name === "server") {
       setStatus(() => t("status.computingServer"));

@@ -12,6 +12,7 @@ image or the pair the failure belongs to.
 # onto localized texts, so add to this list rather than changing the strings.
 ERROR_CODES = (
     "image_unreadable",
+    "heic_unsupported",
     "not_enough_features",
     "not_enough_matches",
     "homography_failed",

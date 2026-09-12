@@ -2,3 +2,6 @@
 -r requirements.txt
 pytest>=8
 ruff>=0.5
+# optional HEIC decoding, exercised by the tests
+pillow>=10
+pillow-heif>=0.16
